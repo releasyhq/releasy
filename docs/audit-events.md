@@ -61,6 +61,8 @@ policies). Recommended practice:
 - Keep audit events for a minimum operational window (for example 90 days).
 - Purge or archive older rows based on your compliance requirements.
 
+See `docs/audit-retention.md` for SQL templates.
+
 ## Access Model
 
 ## Read API
