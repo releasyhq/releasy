@@ -39,6 +39,10 @@ Admin bootstrap keys continue to work via:
 x-releasy-admin-key: <admin-key>
 ```
 
+If both are present, Releasy tries the operator JWT first. If JWKS
+is not configured or JWT validation fails, Releasy falls back to the
+admin bootstrap key when provided.
+
 ## Role Extraction
 
 Roles are collected from these claims (all are merged):

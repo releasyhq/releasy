@@ -289,16 +289,35 @@ pub async fn admin_authorize_with_role(
     settings: &Settings,
     jwks_cache: &Option<JwksCache>,
 ) -> Result<AdminRole, ApiError> {
+    let has_admin_key = admin_key_from_headers(headers).is_some();
     if let Some(token) = bearer_token(headers)
         && looks_like_jwt(&token)
     {
-        let jwks_cache = jwks_cache.as_ref().ok_or_else(|| {
-            ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "operator jwks not configured",
-            )
-        })?;
-        return authorize_operator_jwt(&token, settings, jwks_cache).await;
+        let jwks_cache = match jwks_cache.as_ref() {
+            Some(cache) => cache,
+            None => {
+                if has_admin_key {
+                    warn!("operator jwks not configured, falling back to admin key");
+                    admin_authorize(headers, settings)?;
+                    return Ok(AdminRole::PlatformAdmin);
+                }
+                return Err(ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "operator jwks not configured",
+                ));
+            }
+        };
+        match authorize_operator_jwt(&token, settings, jwks_cache).await {
+            Ok(role) => return Ok(role),
+            Err(err) => {
+                if has_admin_key {
+                    warn!("operator jwt auth failed, falling back to admin key");
+                    admin_authorize(headers, settings)?;
+                    return Ok(AdminRole::PlatformAdmin);
+                }
+                return Err(err);
+            }
+        }
     }
 
     admin_authorize(headers, settings)?;
@@ -825,6 +844,60 @@ mod tests {
         let settings = test_settings();
         let headers = HeaderMap::new();
         assert!(admin_authorize(&headers, &settings).is_err());
+    }
+
+    #[tokio::test]
+    async fn admin_authorize_with_role_falls_back_without_jwks() {
+        let settings = test_settings();
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer a.b.c".parse().unwrap());
+        headers.insert("x-releasy-admin-key", "secret".parse().unwrap());
+
+        let role = admin_authorize_with_role(&headers, &settings, &None)
+            .await
+            .expect("role");
+        assert_eq!(role, AdminRole::PlatformAdmin);
+    }
+
+    #[tokio::test]
+    async fn admin_authorize_with_role_falls_back_on_jwt_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let body = r#"{"keys":[]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await.expect("write");
+        });
+
+        let cache = JwksCache {
+            jwks_url: format!("http://{addr}/jwks"),
+            ttl: Duration::from_secs(30),
+            client: Client::builder()
+                .timeout(Duration::from_millis(200))
+                .build()
+                .expect("client"),
+            state: Arc::new(RwLock::new(None)),
+        };
+
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256","kid":"missing"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(r#"{"sub":"operator"}"#);
+        let token = format!("{header}.{payload}.signature");
+
+        let settings = test_settings();
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+        headers.insert("x-releasy-admin-key", "secret".parse().unwrap());
+
+        let role = admin_authorize_with_role(&headers, &settings, &Some(cache))
+            .await
+            .expect("role");
+        assert_eq!(role, AdminRole::PlatformAdmin);
+        server.await.expect("server");
     }
 
     #[test]
