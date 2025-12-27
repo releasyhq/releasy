@@ -275,6 +275,11 @@ pub async fn create_release(
     };
 
     state.db.insert_release(&record).await.map_err(|err| {
+        if let sqlx::Error::Database(db_err) = &err
+            && db_err.is_unique_violation()
+        {
+            return ApiError::new(StatusCode::CONFLICT, "release already exists");
+        }
         error!("failed to create release: {err}");
         ApiError::internal("failed to create release")
     })?;
@@ -769,5 +774,28 @@ mod tests {
             .count();
         assert_eq!(successes, 1);
         assert_eq!(conflicts, 1);
+    }
+
+    #[tokio::test]
+    async fn create_release_rejects_duplicate_version() {
+        let state = setup_state().await;
+        let headers = admin_headers();
+
+        let first = ReleaseCreateRequest {
+            product: "releasy".to_string(),
+            version: "1.0.0".to_string(),
+        };
+        let _ = create_release(State(state.clone()), headers.clone(), Json(first))
+            .await
+            .expect("first release");
+
+        let second = ReleaseCreateRequest {
+            product: "releasy".to_string(),
+            version: "1.0.0".to_string(),
+        };
+        let err = create_release(State(state), headers, Json(second))
+            .await
+            .expect_err("duplicate release");
+        assert_eq!(err.status(), StatusCode::CONFLICT);
     }
 }
