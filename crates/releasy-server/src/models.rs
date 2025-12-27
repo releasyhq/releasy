@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Customer {
@@ -36,7 +37,7 @@ pub struct ApiKeyAuthRecord {
     pub revoked_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApiKeyIntrospection {
     pub active: bool,
     pub api_key_id: String,

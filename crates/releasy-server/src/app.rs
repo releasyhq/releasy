@@ -9,6 +9,7 @@ use crate::handlers::{
     publish_release, register_release_artifact, resolve_download_token, unpublish_release,
     update_entitlement,
 };
+use crate::openapi;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -19,6 +20,7 @@ pub struct AppState {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/openapi.json", get(openapi::openapi_json))
         .route("/v1/admin/customers", post(admin_create_customer))
         .route(
             "/v1/admin/customers/{customer_id}/entitlements",

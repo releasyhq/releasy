@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use tokio::sync::Barrier;
 use tracing::error;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -26,7 +27,7 @@ use crate::auth::{
 };
 use crate::config::ArtifactSettings;
 use crate::db::AuditEventFilter;
-use crate::errors::ApiError;
+use crate::errors::{ApiError, ErrorBody};
 use crate::models::{
     ALLOWED_SCOPES, ApiKeyIntrospection, ApiKeyRecord, ArtifactRecord, AuditEventRecord, Customer,
     DEFAULT_API_KEY_TYPE, DownloadTokenRecord, EntitlementRecord, ReleaseRecord, default_scopes,
@@ -38,13 +39,13 @@ use crate::utils::now_ts;
 #[cfg(test)]
 static RELEASE_UPDATE_BARRIER: Mutex<Option<Arc<Barrier>>> = Mutex::new(None);
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub(crate) struct AdminCreateCustomerRequest {
     name: String,
     plan: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct AdminCreateCustomerResponse {
     id: String,
     name: String,
@@ -52,7 +53,7 @@ pub(crate) struct AdminCreateCustomerResponse {
     created_at: i64,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub(crate) struct AdminCreateKeyRequest {
     customer_id: String,
     name: Option<String>,
@@ -61,7 +62,7 @@ pub(crate) struct AdminCreateKeyRequest {
     key_type: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AdminCreateKeyResponse {
     api_key_id: String,
     api_key: String,
@@ -71,17 +72,17 @@ pub(crate) struct AdminCreateKeyResponse {
     expires_at: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct AdminRevokeKeyRequest {
     api_key_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AdminRevokeKeyResponse {
     api_key_id: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub(crate) struct EntitlementCreateRequest {
     product: String,
     starts_at: i64,
@@ -89,7 +90,7 @@ pub(crate) struct EntitlementCreateRequest {
     metadata: Option<Value>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub(crate) struct EntitlementUpdateRequest {
     product: Option<String>,
     starts_at: Option<i64>,
@@ -99,7 +100,7 @@ pub(crate) struct EntitlementUpdateRequest {
     metadata: Option<Option<Value>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct EntitlementResponse {
     id: String,
     customer_id: String,
@@ -129,21 +130,21 @@ impl EntitlementResponse {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct EntitlementListResponse {
     entitlements: Vec<EntitlementResponse>,
     limit: i64,
     offset: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct EntitlementListQuery {
     product: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct AuditEventResponse {
     id: String,
     customer_id: Option<String>,
@@ -173,14 +174,14 @@ impl AuditEventResponse {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AuditEventListResponse {
     events: Vec<AuditEventResponse>,
     limit: i64,
     offset: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct AuditEventListQuery {
     customer_id: Option<String>,
     actor: Option<String>,
@@ -191,13 +192,13 @@ pub(crate) struct AuditEventListQuery {
     offset: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub(crate) struct ReleaseCreateRequest {
     product: String,
     version: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct ReleaseListQuery {
     product: Option<String>,
     status: Option<String>,
@@ -207,7 +208,7 @@ pub(crate) struct ReleaseListQuery {
     offset: Option<u32>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct ReleaseResponse {
     id: String,
     product: String,
@@ -232,7 +233,7 @@ impl ReleaseResponse {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct ArtifactSummary {
     id: String,
     object_key: String,
@@ -253,20 +254,20 @@ impl ArtifactSummary {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ReleaseListResponse {
     releases: Vec<ReleaseResponse>,
     limit: i64,
     offset: i64,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub(crate) struct ArtifactPresignRequest {
     filename: String,
     platform: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct ArtifactPresignResponse {
     artifact_id: String,
     object_key: String,
@@ -274,7 +275,7 @@ pub(crate) struct ArtifactPresignResponse {
     expires_at: i64,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub(crate) struct ArtifactRegisterRequest {
     artifact_id: String,
     object_key: String,
@@ -283,7 +284,7 @@ pub(crate) struct ArtifactRegisterRequest {
     platform: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct ArtifactRegisterResponse {
     id: String,
     release_id: String,
@@ -308,19 +309,42 @@ impl ArtifactRegisterResponse {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub(crate) struct DownloadTokenRequest {
     artifact_id: String,
     purpose: Option<String>,
     expires_in_seconds: Option<u32>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct DownloadTokenResponse {
     download_url: String,
     expires_at: i64,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/admin/customers",
+    tag = "admin",
+    summary = "Create a customer",
+    description = "Creates a new customer record. Requires platform_admin role.",
+    request_body = AdminCreateCustomerRequest,
+    params(
+        ("Idempotency-Key" = Option<String>, Header, description = "Idempotency key for safe retries.")
+    ),
+    responses(
+        (status = 200, description = "Customer created", body = AdminCreateCustomerResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 409, description = "Idempotency conflict", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn admin_create_customer(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -374,6 +398,31 @@ pub async fn admin_create_customer(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/admin/customers/{customer_id}/entitlements",
+    tag = "entitlements",
+    summary = "List customer entitlements",
+    description = "Lists entitlements for a customer with optional product filtering.",
+    params(
+        ("customer_id" = String, Path, description = "Customer identifier"),
+        ("product" = Option<String>, Query, description = "Optional product filter"),
+        ("limit" = Option<u32>, Query, description = "Page size (default 50, max 200)"),
+        ("offset" = Option<u32>, Query, description = "Page offset (default 0)")
+    ),
+    responses(
+        (status = 200, description = "Entitlements list", body = EntitlementListResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Customer not found", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn list_entitlements(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -412,6 +461,33 @@ pub async fn list_entitlements(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/admin/audit-events",
+    tag = "audit",
+    summary = "List audit events",
+    description = "Lists audit events with optional filters and pagination.",
+    params(
+        ("customer_id" = Option<String>, Query, description = "Filter by customer id"),
+        ("actor" = Option<String>, Query, description = "Filter by actor"),
+        ("event" = Option<String>, Query, description = "Filter by event name"),
+        ("created_from" = Option<i64>, Query, description = "Filter events created at or after timestamp"),
+        ("created_to" = Option<i64>, Query, description = "Filter events created at or before timestamp"),
+        ("limit" = Option<u32>, Query, description = "Page size (default 50, max 200)"),
+        ("offset" = Option<u32>, Query, description = "Page offset (default 0)")
+    ),
+    responses(
+        (status = 200, description = "Audit events list", body = AuditEventListResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn list_audit_events(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -472,6 +548,31 @@ pub async fn list_audit_events(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/admin/customers/{customer_id}/entitlements",
+    tag = "entitlements",
+    summary = "Create an entitlement",
+    description = "Creates an entitlement for a customer. Requires platform_admin role.",
+    request_body = EntitlementCreateRequest,
+    params(
+        ("customer_id" = String, Path, description = "Customer identifier"),
+        ("Idempotency-Key" = Option<String>, Header, description = "Idempotency key for safe retries.")
+    ),
+    responses(
+        (status = 200, description = "Entitlement created", body = EntitlementResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Customer not found", body = ErrorBody),
+        (status = 409, description = "Idempotency conflict", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn create_entitlement(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -532,6 +633,30 @@ pub async fn create_entitlement(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/v1/admin/customers/{customer_id}/entitlements/{entitlement_id}",
+    tag = "entitlements",
+    summary = "Update an entitlement",
+    description = "Updates an existing entitlement for a customer. Requires platform_admin role.",
+    request_body = EntitlementUpdateRequest,
+    params(
+        ("customer_id" = String, Path, description = "Customer identifier"),
+        ("entitlement_id" = String, Path, description = "Entitlement identifier")
+    ),
+    responses(
+        (status = 200, description = "Entitlement updated", body = EntitlementResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Entitlement not found", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn update_entitlement(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -600,6 +725,29 @@ pub async fn update_entitlement(
     Ok(Json(EntitlementResponse::try_from_record(record)?))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/admin/customers/{customer_id}/entitlements/{entitlement_id}",
+    tag = "entitlements",
+    summary = "Delete an entitlement",
+    description = "Deletes an entitlement for a customer. Requires platform_admin role.",
+    params(
+        ("customer_id" = String, Path, description = "Customer identifier"),
+        ("entitlement_id" = String, Path, description = "Entitlement identifier")
+    ),
+    responses(
+        (status = 204, description = "Entitlement deleted"),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Entitlement not found", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn delete_entitlement(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -629,6 +777,26 @@ pub async fn delete_entitlement(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/admin/keys",
+    tag = "keys",
+    summary = "Create an API key",
+    description = "Creates an API key for a customer. Requires platform_admin role.",
+    request_body = AdminCreateKeyRequest,
+    responses(
+        (status = 200, description = "API key created", body = AdminCreateKeyResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Customer not found", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn admin_create_key(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -706,6 +874,26 @@ pub async fn admin_create_key(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/admin/keys/revoke",
+    tag = "keys",
+    summary = "Revoke an API key",
+    description = "Revokes an API key for a customer. Requires platform_support or platform_admin.",
+    request_body = AdminRevokeKeyRequest,
+    responses(
+        (status = 200, description = "API key revoked", body = AdminRevokeKeyResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "API key not found", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn admin_revoke_key(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -736,6 +924,29 @@ pub async fn admin_revoke_key(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/releases",
+    tag = "releases",
+    summary = "Create a release",
+    description = "Creates a draft release. Requires platform_admin or release_publisher.",
+    request_body = ReleaseCreateRequest,
+    params(
+        ("Idempotency-Key" = Option<String>, Header, description = "Idempotency key for safe retries.")
+    ),
+    responses(
+        (status = 200, description = "Release created", body = ReleaseResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 409, description = "Release already exists or idempotency conflict", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn create_release(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -782,6 +993,31 @@ pub async fn create_release(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/releases/{release_id}/artifacts/presign",
+    tag = "artifacts",
+    summary = "Presign artifact upload",
+    description = "Returns a presigned URL for uploading an artifact. Requires platform_admin or release_publisher.",
+    request_body = ArtifactPresignRequest,
+    params(
+        ("release_id" = String, Path, description = "Release identifier"),
+        ("Idempotency-Key" = Option<String>, Header, description = "Idempotency key for safe retries.")
+    ),
+    responses(
+        (status = 200, description = "Presigned upload created", body = ArtifactPresignResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Release not found", body = ErrorBody),
+        (status = 409, description = "Idempotency conflict", body = ErrorBody),
+        (status = 503, description = "Artifact storage not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn presign_release_artifact_upload(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -845,6 +1081,30 @@ pub async fn presign_release_artifact_upload(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/releases/{release_id}/artifacts",
+    tag = "artifacts",
+    summary = "Register artifact",
+    description = "Registers an uploaded artifact. Requires platform_admin or release_publisher.",
+    request_body = ArtifactRegisterRequest,
+    params(
+        ("release_id" = String, Path, description = "Release identifier"),
+        ("Idempotency-Key" = Option<String>, Header, description = "Idempotency key for safe retries.")
+    ),
+    responses(
+        (status = 200, description = "Artifact registered", body = ArtifactRegisterResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Release not found", body = ErrorBody),
+        (status = 409, description = "Artifact already exists or idempotency conflict", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn register_release_artifact(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -917,6 +1177,28 @@ pub async fn register_release_artifact(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/downloads/token",
+    tag = "downloads",
+    summary = "Create download token",
+    description = "Creates a download token for an artifact. Requires API key with downloads:token scope.",
+    request_body = DownloadTokenRequest,
+    params(
+        ("Idempotency-Key" = Option<String>, Header, description = "Idempotency key for safe retries.")
+    ),
+    responses(
+        (status = 200, description = "Download token created", body = DownloadTokenResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Artifact or release not found", body = ErrorBody),
+        (status = 409, description = "Idempotency conflict", body = ErrorBody)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 pub async fn create_download_token(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1021,6 +1303,21 @@ pub async fn create_download_token(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/downloads/{token}",
+    tag = "downloads",
+    summary = "Resolve download token",
+    description = "Resolves a download token and redirects to the artifact download URL.",
+    params(
+        ("token" = String, Path, description = "Download token")
+    ),
+    responses(
+        (status = 302, description = "Redirect to artifact download"),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 404, description = "Token not found or expired", body = ErrorBody)
+    )
+)]
 pub async fn resolve_download_token(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -1123,6 +1420,33 @@ pub async fn resolve_download_token(
     Ok(response)
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/releases",
+    tag = "releases",
+    summary = "List releases",
+    description = "Lists releases. Admins can filter all statuses; API keys only see published releases for entitled products.",
+    params(
+        ("product" = Option<String>, Query, description = "Optional product filter"),
+        ("version" = Option<String>, Query, description = "Optional version filter"),
+        ("status" = Option<String>, Query, description = "Optional status filter"),
+        ("include_artifacts" = Option<bool>, Query, description = "Include artifact summaries"),
+        ("limit" = Option<u32>, Query, description = "Page size (default 50, max 200)"),
+        ("offset" = Option<u32>, Query, description = "Page offset (default 0)")
+    ),
+    responses(
+        (status = 200, description = "Releases list", body = ReleaseListResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = []),
+        ("api_key" = [])
+    )
+)]
 pub async fn list_releases(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1307,6 +1631,29 @@ async fn list_releases_for_customer(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/releases/{release_id}/publish",
+    tag = "releases",
+    summary = "Publish a release",
+    description = "Publishes a draft release. Requires platform_admin or release_publisher.",
+    params(
+        ("release_id" = String, Path, description = "Release identifier")
+    ),
+    responses(
+        (status = 200, description = "Release published", body = ReleaseResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Release not found", body = ErrorBody),
+        (status = 409, description = "Release status changed", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn publish_release(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1315,6 +1662,29 @@ pub async fn publish_release(
     apply_release_action_with_rbac(&state, &headers, &release_id, ReleaseAction::Publish).await
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/releases/{release_id}/unpublish",
+    tag = "releases",
+    summary = "Unpublish a release",
+    description = "Unpublishes a release. Requires platform_admin.",
+    params(
+        ("release_id" = String, Path, description = "Release identifier")
+    ),
+    responses(
+        (status = 200, description = "Release unpublished", body = ReleaseResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Release not found", body = ErrorBody),
+        (status = 409, description = "Release status changed", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn unpublish_release(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1323,6 +1693,27 @@ pub async fn unpublish_release(
     apply_release_action_with_rbac(&state, &headers, &release_id, ReleaseAction::Unpublish).await
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/releases/{release_id}",
+    tag = "releases",
+    summary = "Delete a release",
+    description = "Deletes a release. Requires platform_admin.",
+    params(
+        ("release_id" = String, Path, description = "Release identifier")
+    ),
+    responses(
+        (status = 204, description = "Release deleted"),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Release not found", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
 pub async fn delete_release(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1342,6 +1733,22 @@ pub async fn delete_release(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/auth/introspect",
+    tag = "auth",
+    summary = "Introspect API key",
+    description = "Returns API key metadata when the key is valid and authorized.",
+    responses(
+        (status = 200, description = "Introspection result", body = ApiKeyIntrospection),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 503, description = "Auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("api_key" = [])
+    )
+)]
 pub async fn auth_introspect(
     State(state): State<AppState>,
     headers: HeaderMap,

@@ -2,14 +2,15 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize)]
-struct ErrorBody {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ErrorBody {
     error: ErrorDetail,
 }
 
-#[derive(Debug, Serialize)]
-struct ErrorDetail {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ErrorDetail {
     code: String,
     message: String,
 }
