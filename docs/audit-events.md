@@ -74,6 +74,8 @@ Query parameters (optional):
 - `customer_id`: filter events for a specific customer
 - `actor`: filter by actor (for example `api_key`)
 - `event`: filter by event name (for example `api_key.auth`)
+- `created_from`: minimum `created_at` (unix seconds, inclusive)
+- `created_to`: maximum `created_at` (unix seconds, inclusive)
 - `limit` / `offset`: pagination (see `docs/api-conventions.md`)
 
 Response body:

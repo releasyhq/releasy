@@ -25,6 +25,7 @@ use crate::auth::{
     require_release_publisher, require_scopes, require_support_or_admin,
 };
 use crate::config::ArtifactSettings;
+use crate::db::AuditEventFilter;
 use crate::errors::ApiError;
 use crate::models::{
     ALLOWED_SCOPES, ApiKeyIntrospection, ApiKeyRecord, ArtifactRecord, AuditEventRecord, Customer,
@@ -184,6 +185,8 @@ pub(crate) struct AuditEventListQuery {
     customer_id: Option<String>,
     actor: Option<String>,
     event: Option<String>,
+    created_from: Option<i64>,
+    created_to: Option<i64>,
     limit: Option<u32>,
     offset: Option<u32>,
 }
@@ -420,17 +423,37 @@ pub async fn list_audit_events(
     let customer_id = normalize_optional("customer_id", query.customer_id)?;
     let actor = normalize_optional("actor", query.actor)?;
     let event = normalize_optional("event", query.event)?;
+    let created_from = query.created_from;
+    let created_to = query.created_to;
+    if let Some(created_from) = created_from
+        && created_from < 0
+    {
+        return Err(ApiError::bad_request("created_from must be >= 0"));
+    }
+    if let Some(created_to) = created_to
+        && created_to < 0
+    {
+        return Err(ApiError::bad_request("created_to must be >= 0"));
+    }
+    if let (Some(created_from), Some(created_to)) = (created_from, created_to)
+        && created_from > created_to
+    {
+        return Err(ApiError::bad_request("created_from must be <= created_to"));
+    }
+
     let (limit, offset) = resolve_pagination(query.limit, query.offset)?;
+
+    let filter = AuditEventFilter {
+        customer_id: customer_id.as_deref(),
+        actor: actor.as_deref(),
+        event: event.as_deref(),
+        created_from,
+        created_to,
+    };
 
     let events = state
         .db
-        .list_audit_events(
-            customer_id.as_deref(),
-            actor.as_deref(),
-            event.as_deref(),
-            limit,
-            offset,
-        )
+        .list_audit_events(filter, limit, offset)
         .await
         .map_err(|err| {
             error!("failed to list audit events: {err}");
@@ -2732,6 +2755,8 @@ mod tests {
             customer_id: None,
             actor: None,
             event: None,
+            created_from: None,
+            created_to: None,
             limit: None,
             offset: None,
         };
@@ -2780,6 +2805,8 @@ mod tests {
             customer_id: Some("audit-customer-1".to_string()),
             actor: None,
             event: None,
+            created_from: None,
+            created_to: None,
             limit: None,
             offset: None,
         };
@@ -2796,6 +2823,73 @@ mod tests {
             response.events[0].payload,
             Some(json!({"outcome": "accept", "reason": "ok", "api_key_id": null}))
         );
+    }
+
+    #[tokio::test]
+    async fn list_audit_events_filters_by_created_at() {
+        let state = setup_state().await;
+        let now = now_ts_or_internal().expect("now");
+
+        state
+            .db
+            .insert_audit_event(
+                Some("audit-created-1"),
+                "api_key",
+                "api_key.auth",
+                None,
+                now - 120,
+            )
+            .await
+            .expect("insert audit event");
+        state
+            .db
+            .insert_audit_event(
+                Some("audit-created-2"),
+                "api_key",
+                "api_key.auth",
+                None,
+                now - 10,
+            )
+            .await
+            .expect("insert audit event");
+
+        let query = AuditEventListQuery {
+            customer_id: None,
+            actor: None,
+            event: None,
+            created_from: Some(now - 30),
+            created_to: Some(now),
+            limit: None,
+            offset: None,
+        };
+        let Json(response) = list_audit_events(State(state), admin_headers(), Query(query))
+            .await
+            .expect("list audit events");
+        assert_eq!(response.events.len(), 1);
+        assert_eq!(
+            response.events[0].customer_id,
+            Some("audit-created-2".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn list_audit_events_rejects_invalid_range() {
+        let state = setup_state().await;
+        let now = now_ts_or_internal().expect("now");
+
+        let query = AuditEventListQuery {
+            customer_id: None,
+            actor: None,
+            event: None,
+            created_from: Some(now),
+            created_to: Some(now - 10),
+            limit: None,
+            offset: None,
+        };
+        let err = list_audit_events(State(state), admin_headers(), Query(query))
+            .await
+            .expect_err("invalid range");
+        assert_eq!(err.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

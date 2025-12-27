@@ -15,6 +15,15 @@ pub enum Database {
     Sqlite(SqlitePool),
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AuditEventFilter<'a> {
+    pub customer_id: Option<&'a str>,
+    pub actor: Option<&'a str>,
+    pub event: Option<&'a str>,
+    pub created_from: Option<i64>,
+    pub created_to: Option<i64>,
+}
+
 impl Database {
     pub async fn connect(settings: &Settings) -> Result<Self, String> {
         let url = settings.database_url.as_str();
@@ -1280,24 +1289,17 @@ impl Database {
 
     pub async fn list_audit_events(
         &self,
-        customer_id: Option<&str>,
-        actor: Option<&str>,
-        event: Option<&str>,
+        filter: AuditEventFilter<'_>,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<AuditEventRecord>, sqlx::Error> {
         match self {
             Database::Postgres(pool) => {
-                let rows = Self::build_list_audit_events_query::<sqlx::Postgres>(
-                    customer_id,
-                    actor,
-                    event,
-                    limit,
-                    offset,
-                )
-                .build()
-                .fetch_all(pool)
-                .await?;
+                let rows =
+                    Self::build_list_audit_events_query::<sqlx::Postgres>(filter, limit, offset)
+                        .build()
+                        .fetch_all(pool)
+                        .await?;
                 rows.into_iter()
                     .map(|row| {
                         Ok(AuditEventRecord {
@@ -1312,16 +1314,11 @@ impl Database {
                     .collect()
             }
             Database::Sqlite(pool) => {
-                let rows = Self::build_list_audit_events_query::<sqlx::Sqlite>(
-                    customer_id,
-                    actor,
-                    event,
-                    limit,
-                    offset,
-                )
-                .build()
-                .fetch_all(pool)
-                .await?;
+                let rows =
+                    Self::build_list_audit_events_query::<sqlx::Sqlite>(filter, limit, offset)
+                        .build()
+                        .fetch_all(pool)
+                        .await?;
                 rows.into_iter()
                     .map(|row| {
                         Ok(AuditEventRecord {
@@ -1339,9 +1336,7 @@ impl Database {
     }
 
     fn build_list_audit_events_query<'args, DB>(
-        customer_id: Option<&'args str>,
-        actor: Option<&'args str>,
-        event: Option<&'args str>,
+        filter: AuditEventFilter<'args>,
         limit: i64,
         offset: i64,
     ) -> sqlx::QueryBuilder<'args, DB>
@@ -1355,14 +1350,20 @@ impl Database {
              FROM audit_events WHERE 1=1",
         );
 
-        if let Some(customer_id) = customer_id {
+        if let Some(customer_id) = filter.customer_id {
             builder.push(" AND customer_id = ").push_bind(customer_id);
         }
-        if let Some(actor) = actor {
+        if let Some(actor) = filter.actor {
             builder.push(" AND actor = ").push_bind(actor);
         }
-        if let Some(event) = event {
+        if let Some(event) = filter.event {
             builder.push(" AND event = ").push_bind(event);
+        }
+        if let Some(created_from) = filter.created_from {
+            builder.push(" AND created_at >= ").push_bind(created_from);
+        }
+        if let Some(created_to) = filter.created_to {
+            builder.push(" AND created_at <= ").push_bind(created_to);
         }
 
         builder
