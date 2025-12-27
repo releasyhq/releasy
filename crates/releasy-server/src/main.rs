@@ -1,15 +1,4 @@
-mod app;
-mod auth;
-mod config;
-mod db;
-mod errors;
-mod handlers;
-mod models;
-mod release;
-mod utils;
-
-use crate::config::Settings;
-use crate::db::Database;
+use releasy_server::{app, auth, config::Settings, db::Database};
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
 

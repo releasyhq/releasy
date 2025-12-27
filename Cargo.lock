@@ -1721,6 +1721,7 @@ dependencies = [
  "sha2",
  "sqlx",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "uuid",
