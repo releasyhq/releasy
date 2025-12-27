@@ -5,6 +5,7 @@ Project documentation lives here.
 ## Guides
 
 - [admin-bootstrap.md](admin-bootstrap.md): Initial admin bootstrap flow and setup steps.
+- [deployment.md](deployment.md): Self-hosted deployment patterns and rollout guidance.
 - [operator-auth.md](operator-auth.md): Operator JWT auth, JWKS config, and RBAC roles.
 
 ## API Reference
