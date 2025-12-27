@@ -1,6 +1,23 @@
-use axum::{body::Body, http::Request, http::StatusCode};
-use releasy_server::{app, config::Settings, db::Database};
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+    response::Response,
+};
+use http_body_util::BodyExt;
+use releasy_server::{app, auth, config::Settings, db::Database};
+use serde_json::{Value, json};
+use sqlx::Row;
 use tower::ServiceExt;
+use uuid::Uuid;
+
+const ADMIN_KEY_HEADER: (&str, &str) = ("x-releasy-admin-key", "secret");
+
+fn now_ts() -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time");
+    now.as_secs() as i64
+}
 
 fn test_settings() -> Settings {
     Settings {
@@ -35,18 +52,178 @@ async fn setup_app() -> (axum::Router, Database) {
     (app::router(state), db)
 }
 
+fn sqlite_pool(db: &Database) -> &sqlx::SqlitePool {
+    match db {
+        Database::Sqlite(pool) => pool,
+        Database::Postgres(_) => panic!("sqlite expected"),
+    }
+}
+
+async fn response_json(response: Response) -> Value {
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("collect body")
+        .to_bytes();
+    serde_json::from_slice(&bytes).expect("json body")
+}
+
+async fn send_json(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: Value,
+) -> Response {
+    let mut builder = Request::builder().method(method).uri(uri);
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let body = Body::from(serde_json::to_vec(&body).expect("serialize body"));
+    let request = builder
+        .header("content-type", "application/json")
+        .body(body)
+        .expect("request");
+    app.clone().oneshot(request).await.expect("response")
+}
+
+async fn send_empty(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    headers: &[(&str, &str)],
+) -> Response {
+    let mut builder = Request::builder().method(method).uri(uri);
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let request = builder.body(Body::empty()).expect("request");
+    app.clone().oneshot(request).await.expect("response")
+}
+
+async fn create_customer(app: &axum::Router, name: &str) -> String {
+    let response = send_json(
+        app,
+        "POST",
+        "/v1/admin/customers",
+        &[ADMIN_KEY_HEADER],
+        json!({ "name": name }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    body.get("id")
+        .and_then(Value::as_str)
+        .expect("customer id")
+        .to_string()
+}
+
+async fn create_entitlement(app: &axum::Router, customer_id: &str, product: &str, starts_at: i64) {
+    let uri = format!("/v1/admin/customers/{customer_id}/entitlements",);
+    let response = send_json(
+        app,
+        "POST",
+        &uri,
+        &[ADMIN_KEY_HEADER],
+        json!({
+            "product": product,
+            "starts_at": starts_at,
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+async fn create_release(app: &axum::Router, product: &str, version: &str) -> String {
+    let response = send_json(
+        app,
+        "POST",
+        "/v1/releases",
+        &[ADMIN_KEY_HEADER],
+        json!({ "product": product, "version": version }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    body.get("id")
+        .and_then(Value::as_str)
+        .expect("release id")
+        .to_string()
+}
+
+async fn publish_release(app: &axum::Router, release_id: &str) {
+    let uri = format!("/v1/releases/{release_id}/publish");
+    let response = send_empty(app, "POST", &uri, &[ADMIN_KEY_HEADER]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+async fn insert_api_key(db: &Database, customer_id: &str, scopes: &[&str]) -> (String, String) {
+    let raw_key = auth::generate_api_key().expect("api key");
+    let key_hash = auth::hash_api_key(&raw_key, None).expect("key hash");
+    let key_prefix = auth::api_key_prefix(&raw_key);
+    let scopes_json = serde_json::to_string(
+        &scopes
+            .iter()
+            .map(|scope| scope.to_string())
+            .collect::<Vec<_>>(),
+    )
+    .expect("scopes json");
+    let key_id = Uuid::new_v4().to_string();
+    let created_at = now_ts();
+
+    sqlx::query(
+        "INSERT INTO api_keys (id, customer_id, key_hash, key_prefix, name, key_type, scopes, \
+         expires_at, created_at, revoked_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&key_id)
+    .bind(customer_id)
+    .bind(&key_hash)
+    .bind(&key_prefix)
+    .bind(None::<String>)
+    .bind("human")
+    .bind(&scopes_json)
+    .bind(None::<i64>)
+    .bind(created_at)
+    .bind(None::<i64>)
+    .bind(None::<i64>)
+    .execute(sqlite_pool(db))
+    .await
+    .expect("insert api key");
+
+    (key_id, raw_key)
+}
+
+async fn api_key_count(db: &Database, customer_id: &str) -> i64 {
+    let row = sqlx::query("SELECT COUNT(*) AS count FROM api_keys WHERE customer_id = ?")
+        .bind(customer_id)
+        .fetch_one(sqlite_pool(db))
+        .await
+        .expect("api key count");
+    row.get("count")
+}
+
+async fn api_key_last_used(db: &Database, key_id: &str) -> Option<i64> {
+    let row = sqlx::query("SELECT last_used_at FROM api_keys WHERE id = ?")
+        .bind(key_id)
+        .fetch_one(sqlite_pool(db))
+        .await
+        .expect("api key last_used_at");
+    row.get("last_used_at")
+}
+
 #[tokio::test]
 async fn create_release_requires_admin_key() {
     let (app, db) = setup_app().await;
 
-    let request = Request::builder()
-        .method("POST")
-        .uri("/v1/releases")
-        .header("content-type", "application/json")
-        .body(Body::from(r#"{"product":"releasy","version":"1.0.0"}"#))
-        .unwrap();
-
-    let response = app.oneshot(request).await.expect("response");
+    let response = send_json(
+        &app,
+        "POST",
+        "/v1/releases",
+        &[],
+        json!({ "product": "releasy", "version": "1.0.0" }),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
     let releases = db
@@ -60,15 +237,14 @@ async fn create_release_requires_admin_key() {
 async fn create_release_inserts_release() {
     let (app, db) = setup_app().await;
 
-    let request = Request::builder()
-        .method("POST")
-        .uri("/v1/releases")
-        .header("content-type", "application/json")
-        .header("x-releasy-admin-key", "secret")
-        .body(Body::from(r#"{"product":"releasy","version":"1.2.3"}"#))
-        .unwrap();
-
-    let response = app.oneshot(request).await.expect("response");
+    let response = send_json(
+        &app,
+        "POST",
+        "/v1/releases",
+        &[ADMIN_KEY_HEADER],
+        json!({ "product": "releasy", "version": "1.2.3" }),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::OK);
 
     let releases = db
@@ -81,4 +257,149 @@ async fn create_release_inserts_release() {
     assert_eq!(release.product, "releasy");
     assert_eq!(release.version, "1.2.3");
     assert_eq!(release.status, "draft");
+}
+
+#[tokio::test]
+async fn admin_create_customer_and_list_entitlements() {
+    let (app, db) = setup_app().await;
+
+    let customer_id = create_customer(&app, "Acme Co").await;
+    create_entitlement(&app, &customer_id, "releasy", now_ts() - 60).await;
+
+    let uri = format!("/v1/admin/customers/{customer_id}/entitlements",);
+    let response = send_empty(&app, "GET", &uri, &[ADMIN_KEY_HEADER]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response_json(response).await;
+    let entitlements = body
+        .get("entitlements")
+        .and_then(Value::as_array)
+        .expect("entitlements list");
+    assert_eq!(entitlements.len(), 1);
+    assert_eq!(
+        entitlements[0].get("product").and_then(Value::as_str),
+        Some("releasy")
+    );
+
+    let stored = db
+        .list_entitlements_by_customer(&customer_id, None, None, None)
+        .await
+        .expect("list entitlements");
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].product, "releasy");
+}
+
+#[tokio::test]
+async fn admin_create_key_persists_record() {
+    let (app, db) = setup_app().await;
+
+    let customer_id = create_customer(&app, "Key Customer").await;
+    let before = api_key_count(&db, &customer_id).await;
+
+    let response = send_json(
+        &app,
+        "POST",
+        "/v1/admin/keys",
+        &[ADMIN_KEY_HEADER],
+        json!({
+            "customer_id": customer_id.as_str(),
+            "scopes": ["keys:read"],
+            "key_type": "human",
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response_json(response).await;
+    assert_eq!(
+        body.get("customer_id").and_then(Value::as_str),
+        Some(customer_id.as_str())
+    );
+
+    let after = api_key_count(&db, &customer_id).await;
+    assert_eq!(after, before + 1);
+}
+
+#[tokio::test]
+async fn auth_introspect_returns_key_details() {
+    let (app, db) = setup_app().await;
+
+    let customer_id = create_customer(&app, "Introspect Co").await;
+    let (key_id, api_key) = insert_api_key(&db, &customer_id, &["keys:read"]).await;
+
+    let api_key_headers = [("x-releasy-api-key", api_key.as_str())];
+    let response = send_empty(&app, "POST", "/v1/auth/introspect", &api_key_headers).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response_json(response).await;
+    assert_eq!(body.get("active").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        body.get("customer_id").and_then(Value::as_str),
+        Some(customer_id.as_str())
+    );
+    let scopes = body
+        .get("scopes")
+        .and_then(Value::as_array)
+        .expect("scopes");
+    assert!(
+        scopes
+            .iter()
+            .any(|value| value.as_str() == Some("keys:read"))
+    );
+
+    let last_used_at = api_key_last_used(&db, &key_id).await;
+    assert!(last_used_at.is_some());
+}
+
+#[tokio::test]
+async fn auth_introspect_rejects_missing_scope() {
+    let (app, db) = setup_app().await;
+
+    let customer_id = create_customer(&app, "Scope Co").await;
+    let (_key_id, api_key) = insert_api_key(&db, &customer_id, &["downloads:token"]).await;
+
+    let api_key_headers = [("x-releasy-api-key", api_key.as_str())];
+    let response = send_empty(&app, "POST", "/v1/auth/introspect", &api_key_headers).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn list_releases_for_customer_includes_published_release() {
+    let (app, db) = setup_app().await;
+
+    let customer_id = create_customer(&app, "Release Customer").await;
+    let release_id = create_release(&app, "releasy", "2.0.0").await;
+    publish_release(&app, &release_id).await;
+    create_entitlement(&app, &customer_id, "releasy", now_ts() - 60).await;
+
+    let (_key_id, api_key) = insert_api_key(&db, &customer_id, &["releases:read"]).await;
+    let api_key_headers = [("x-releasy-api-key", api_key.as_str())];
+
+    let response = send_empty(
+        &app,
+        "GET",
+        "/v1/releases?status=published",
+        &api_key_headers,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response_json(response).await;
+    let releases = body
+        .get("releases")
+        .and_then(Value::as_array)
+        .expect("releases list");
+    assert_eq!(releases.len(), 1);
+    assert_eq!(
+        releases[0].get("product").and_then(Value::as_str),
+        Some("releasy")
+    );
+    assert_eq!(
+        releases[0].get("version").and_then(Value::as_str),
+        Some("2.0.0")
+    );
+    assert_eq!(
+        releases[0].get("status").and_then(Value::as_str),
+        Some("published")
+    );
 }
