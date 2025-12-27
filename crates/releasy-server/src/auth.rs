@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::sleep;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 use crate::{
     config::Settings, db::Database, errors::ApiError, models::ApiKeyAuthRecord, utils::now_ts,
@@ -289,35 +289,18 @@ pub async fn admin_authorize_with_role(
     settings: &Settings,
     jwks_cache: &Option<JwksCache>,
 ) -> Result<AdminRole, ApiError> {
-    let has_admin_key = admin_key_from_headers(headers).is_some();
-    if let Some(token) = bearer_token(headers)
+    if admin_key_from_headers(headers).is_some() {
+        admin_authorize(headers, settings)?;
+        info!("admin authorization via admin key");
+        return Ok(AdminRole::PlatformAdmin);
+    }
+
+    if let (Some(token), Some(jwks_cache)) = (bearer_token(headers), jwks_cache.as_ref())
         && looks_like_jwt(&token)
     {
-        let jwks_cache = match jwks_cache.as_ref() {
-            Some(cache) => cache,
-            None => {
-                if has_admin_key {
-                    warn!("operator jwks not configured, falling back to admin key");
-                    admin_authorize(headers, settings)?;
-                    return Ok(AdminRole::PlatformAdmin);
-                }
-                return Err(ApiError::new(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "operator jwks not configured",
-                ));
-            }
-        };
-        match authorize_operator_jwt(&token, settings, jwks_cache).await {
-            Ok(role) => return Ok(role),
-            Err(err) => {
-                if has_admin_key {
-                    warn!("operator jwt auth failed, falling back to admin key");
-                    admin_authorize(headers, settings)?;
-                    return Ok(AdminRole::PlatformAdmin);
-                }
-                return Err(err);
-            }
-        }
+        let role = authorize_operator_jwt(&token, settings, jwks_cache).await?;
+        info!("admin authorization via operator jwt");
+        return Ok(role);
     }
 
     admin_authorize(headers, settings)?;
@@ -627,6 +610,7 @@ mod tests {
             operator_resource: None,
             operator_jwks_ttl_seconds: 300,
             operator_jwt_leeway_seconds: 0,
+            artifact_settings: None,
         }
     }
 
@@ -860,7 +844,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn admin_authorize_with_role_falls_back_on_jwt_failure() {
+    async fn admin_authorize_with_role_rejects_invalid_jwt_without_admin_key() {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
         let server = tokio::spawn(async move {
@@ -891,13 +875,35 @@ mod tests {
         let settings = test_settings();
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+
+        let err = admin_authorize_with_role(&headers, &settings, &Some(cache))
+            .await
+            .expect_err("role");
+        assert_eq!(err.status(), StatusCode::UNAUTHORIZED);
+        server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn admin_authorize_with_role_prefers_admin_key_over_jwt() {
+        let cache = JwksCache {
+            jwks_url: "http://127.0.0.1:0/jwks".to_string(),
+            ttl: Duration::from_secs(30),
+            client: Client::builder()
+                .timeout(Duration::from_millis(50))
+                .build()
+                .expect("client"),
+            state: Arc::new(RwLock::new(None)),
+        };
+
+        let settings = test_settings();
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer a.b.c".parse().unwrap());
         headers.insert("x-releasy-admin-key", "secret".parse().unwrap());
 
         let role = admin_authorize_with_role(&headers, &settings, &Some(cache))
             .await
             .expect("role");
         assert_eq!(role, AdminRole::PlatformAdmin);
-        server.await.expect("server");
     }
 
     #[test]
