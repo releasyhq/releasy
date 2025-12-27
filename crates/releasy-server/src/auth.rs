@@ -426,13 +426,16 @@ fn validate_api_key(record: &ApiKeyAuthRecord, now: i64) -> Result<(), ApiKeyInv
 }
 
 fn parse_scopes(scopes: &str) -> Result<Vec<String>, ApiError> {
-    let values: Vec<serde_json::Value> =
-        serde_json::from_str(scopes).map_err(|_| ApiError::internal("invalid scope data"))?;
+    let values: Vec<serde_json::Value> = serde_json::from_str(scopes).map_err(|err| {
+        warn!("invalid api key scope data: {err}");
+        ApiError::unauthorized()
+    })?;
     let mut parsed = Vec::new();
     for entry in values {
-        let scope = entry
-            .as_str()
-            .ok_or_else(|| ApiError::internal("invalid scope data"))?;
+        let scope = entry.as_str().ok_or_else(|| {
+            warn!("invalid api key scope entry");
+            ApiError::unauthorized()
+        })?;
         parsed.push(scope.to_string());
     }
     Ok(parsed)
@@ -586,7 +589,7 @@ mod tests {
     use crate::models::{
         ApiKeyRecord, Customer, DEFAULT_API_KEY_TYPE, default_scopes, scopes_to_json,
     };
-    use axum::http::HeaderMap;
+    use axum::http::{HeaderMap, StatusCode};
     use serde_json::json;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
@@ -751,10 +754,62 @@ mod tests {
         assert!(last_used_at.is_none());
     }
 
+    #[tokio::test]
+    async fn authenticate_api_key_rejects_invalid_scopes() {
+        let settings = test_settings();
+        let db = setup_db(&settings).await;
+
+        let customer = Customer {
+            id: "customer".to_string(),
+            name: "Customer".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: 1,
+            suspended_at: None,
+        };
+        db.insert_customer(&customer).await.expect("customer");
+
+        let raw_key = "releasy_test_key";
+        let record = ApiKeyRecord {
+            id: "key".to_string(),
+            customer_id: customer.id.clone(),
+            key_hash: hash_api_key(raw_key, None),
+            key_prefix: api_key_prefix(raw_key),
+            name: None,
+            key_type: DEFAULT_API_KEY_TYPE.to_string(),
+            scopes: "not-json".to_string(),
+            expires_at: None,
+            created_at: 1,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        let key_id = record.id.clone();
+        db.insert_api_key(&record).await.expect("api key");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-releasy-api-key", raw_key.parse().unwrap());
+        let err = authenticate_api_key(&headers, &settings, &db)
+            .await
+            .expect_err("auth");
+        assert_eq!(err.status(), StatusCode::UNAUTHORIZED);
+
+        let last_used_at = fetch_last_used_at(&db, &key_id).await;
+        assert!(last_used_at.is_none());
+    }
+
+    #[test]
+    fn parse_scopes_accepts_valid_json() {
+        let result = parse_scopes("[\"release:read\", \"release:write\"]").expect("scopes");
+        assert_eq!(
+            result,
+            vec!["release:read".to_string(), "release:write".to_string()]
+        );
+    }
+
     #[test]
     fn parse_scopes_rejects_invalid_json() {
-        let result = parse_scopes("not-json");
-        assert!(result.is_err());
+        let result = parse_scopes("not-json").expect_err("error");
+        assert_eq!(result.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[test]
