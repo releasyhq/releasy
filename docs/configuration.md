@@ -19,8 +19,14 @@ available settings.
 
 Supported databases:
 
-- **PostgreSQL**: `postgres://user:pass@host:5432/dbname`
-- **SQLite**: `sqlite:path/to/db.sqlite` or `sqlite::memory:`
+- **PostgreSQL**: `postgres://user:pass@host:5432/dbname` (also `postgresql://`)
+- **SQLite (file)**: `sqlite://relative/path.db` or `sqlite:///absolute/path.db`
+- **SQLite (memory)**: `sqlite::memory:` (dev/tests only)
+
+Recommendation:
+
+- Use PostgreSQL for production and multi-instance deployments.
+- Use SQLite for local development or single-instance evaluation.
 
 ## Authentication
 

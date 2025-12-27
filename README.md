@@ -17,6 +17,7 @@ Releasy is an API-first platform to manage:
 ## Documentation
 
 - [Configuration](docs/configuration.md) – Environment variables reference
+- [Database](docs/database.md) – Postgres/SQLite support and migrations
 - [Admin Bootstrap](docs/admin-bootstrap.md) – Initial setup and API key management
 - [Operator Auth](docs/operator-auth.md) – JWT/JWKS authentication and RBAC
 - [Release API](docs/release-api.md) – Release lifecycle endpoints
