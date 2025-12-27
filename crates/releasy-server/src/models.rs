@@ -99,6 +99,16 @@ pub struct IdempotencyRecord {
     pub expires_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEventRecord {
+    pub id: String,
+    pub customer_id: Option<String>,
+    pub actor: String,
+    pub event: String,
+    pub payload: Option<String>,
+    pub created_at: i64,
+}
+
 pub const DEFAULT_API_KEY_TYPE: &str = "human";
 
 pub const ALLOWED_SCOPES: &[&str] = &[

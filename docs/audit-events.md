@@ -63,13 +63,49 @@ policies). Recommended practice:
 
 ## Access Model
 
-Core does not provide an HTTP API to read audit events yet. Access is currently
-local to the database. Intended access policy:
+## Read API
+
+`GET /v1/admin/audit-events`
+
+Query parameters (optional):
+
+- `customer_id`: filter events for a specific customer
+- `actor`: filter by actor (for example `api_key`)
+- `event`: filter by event name (for example `api_key.auth`)
+- `limit` / `offset`: pagination (see `docs/api-conventions.md`)
+
+Response body:
+
+```json
+{
+  "events": [
+    {
+      "id": "evt_...",
+      "customer_id": "cust_...",
+      "actor": "api_key",
+      "event": "api_key.auth",
+      "payload": {
+        "outcome": "accept",
+        "reason": "ok",
+        "api_key_id": "key_..."
+      },
+      "created_at": 1700000000
+    }
+  ],
+  "limit": 50,
+  "offset": 0
+}
+```
+
+## Access Model
+
+Audit events are available only to the admin/operator authorization flow:
 
 - `platform_admin`: read access
 - `platform_support`: read access
 - `release_publisher`: no access
 - customer-level credentials: no access
 
-When a read API is added, it will be gated behind an explicit scope (for
-example `audit:read`) and the roles above.
+Customer API keys are not permitted to read audit events. If a customer-facing
+read API is introduced later, it will be gated behind a dedicated scope (for
+example `audit:read`).

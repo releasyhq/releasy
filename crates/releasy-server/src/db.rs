@@ -4,8 +4,8 @@ use uuid::Uuid;
 use crate::{
     config::Settings,
     models::{
-        ApiKeyAuthRecord, ApiKeyRecord, ArtifactRecord, Customer, DownloadTokenRecord,
-        EntitlementRecord, IdempotencyRecord, ReleaseRecord,
+        ApiKeyAuthRecord, ApiKeyRecord, ArtifactRecord, AuditEventRecord, Customer,
+        DownloadTokenRecord, EntitlementRecord, IdempotencyRecord, ReleaseRecord,
     },
 };
 
@@ -1276,6 +1276,102 @@ impl Database {
                 .rows_affected(),
         };
         Ok(rows)
+    }
+
+    pub async fn list_audit_events(
+        &self,
+        customer_id: Option<&str>,
+        actor: Option<&str>,
+        event: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<AuditEventRecord>, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let rows = Self::build_list_audit_events_query::<sqlx::Postgres>(
+                    customer_id,
+                    actor,
+                    event,
+                    limit,
+                    offset,
+                )
+                .build()
+                .fetch_all(pool)
+                .await?;
+                rows.into_iter()
+                    .map(|row| {
+                        Ok(AuditEventRecord {
+                            id: row.try_get("id")?,
+                            customer_id: row.try_get("customer_id")?,
+                            actor: row.try_get("actor")?,
+                            event: row.try_get("event")?,
+                            payload: row.try_get("payload")?,
+                            created_at: row.try_get("created_at")?,
+                        })
+                    })
+                    .collect()
+            }
+            Database::Sqlite(pool) => {
+                let rows = Self::build_list_audit_events_query::<sqlx::Sqlite>(
+                    customer_id,
+                    actor,
+                    event,
+                    limit,
+                    offset,
+                )
+                .build()
+                .fetch_all(pool)
+                .await?;
+                rows.into_iter()
+                    .map(|row| {
+                        Ok(AuditEventRecord {
+                            id: row.try_get("id")?,
+                            customer_id: row.try_get("customer_id")?,
+                            actor: row.try_get("actor")?,
+                            event: row.try_get("event")?,
+                            payload: row.try_get("payload")?,
+                            created_at: row.try_get("created_at")?,
+                        })
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    fn build_list_audit_events_query<'args, DB>(
+        customer_id: Option<&'args str>,
+        actor: Option<&'args str>,
+        event: Option<&'args str>,
+        limit: i64,
+        offset: i64,
+    ) -> sqlx::QueryBuilder<'args, DB>
+    where
+        DB: sqlx::Database,
+        &'args str: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+        i64: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+    {
+        let mut builder = sqlx::QueryBuilder::<DB>::new(
+            "SELECT id, customer_id, actor, event, payload, created_at \
+             FROM audit_events WHERE 1=1",
+        );
+
+        if let Some(customer_id) = customer_id {
+            builder.push(" AND customer_id = ").push_bind(customer_id);
+        }
+        if let Some(actor) = actor {
+            builder.push(" AND actor = ").push_bind(actor);
+        }
+        if let Some(event) = event {
+            builder.push(" AND event = ").push_bind(event);
+        }
+
+        builder
+            .push(" ORDER BY created_at DESC LIMIT ")
+            .push_bind(limit)
+            .push(" OFFSET ")
+            .push_bind(offset);
+
+        builder
     }
 
     pub async fn insert_audit_event(

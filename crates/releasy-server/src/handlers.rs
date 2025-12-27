@@ -27,7 +27,7 @@ use crate::auth::{
 use crate::config::ArtifactSettings;
 use crate::errors::ApiError;
 use crate::models::{
-    ALLOWED_SCOPES, ApiKeyIntrospection, ApiKeyRecord, ArtifactRecord, Customer,
+    ALLOWED_SCOPES, ApiKeyIntrospection, ApiKeyRecord, ArtifactRecord, AuditEventRecord, Customer,
     DEFAULT_API_KEY_TYPE, DownloadTokenRecord, EntitlementRecord, ReleaseRecord, default_scopes,
     normalize_scopes, scopes_to_json,
 };
@@ -138,6 +138,52 @@ pub(crate) struct EntitlementListResponse {
 #[derive(Debug, Deserialize)]
 pub(crate) struct EntitlementListQuery {
     product: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct AuditEventResponse {
+    id: String,
+    customer_id: Option<String>,
+    actor: String,
+    event: String,
+    payload: Option<Value>,
+    created_at: i64,
+}
+
+impl AuditEventResponse {
+    fn try_from_record(record: AuditEventRecord) -> Result<Self, ApiError> {
+        let payload = match record.payload {
+            Some(payload) => Some(serde_json::from_str(&payload).map_err(|err| {
+                error!("failed to parse audit payload: {err}");
+                ApiError::internal("invalid audit payload")
+            })?),
+            None => None,
+        };
+        Ok(Self {
+            id: record.id,
+            customer_id: record.customer_id,
+            actor: record.actor,
+            event: record.event,
+            payload,
+            created_at: record.created_at,
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AuditEventListResponse {
+    events: Vec<AuditEventResponse>,
+    limit: i64,
+    offset: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AuditEventListQuery {
+    customer_id: Option<String>,
+    actor: Option<String>,
+    event: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
 }
@@ -358,6 +404,46 @@ pub async fn list_entitlements(
 
     Ok(Json(EntitlementListResponse {
         entitlements: responses,
+        limit,
+        offset,
+    }))
+}
+
+pub async fn list_audit_events(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<AuditEventListQuery>,
+) -> Result<Json<AuditEventListResponse>, ApiError> {
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_support_or_admin(role)?;
+
+    let customer_id = normalize_optional("customer_id", query.customer_id)?;
+    let actor = normalize_optional("actor", query.actor)?;
+    let event = normalize_optional("event", query.event)?;
+    let (limit, offset) = resolve_pagination(query.limit, query.offset)?;
+
+    let events = state
+        .db
+        .list_audit_events(
+            customer_id.as_deref(),
+            actor.as_deref(),
+            event.as_deref(),
+            limit,
+            offset,
+        )
+        .await
+        .map_err(|err| {
+            error!("failed to list audit events: {err}");
+            ApiError::internal("failed to list audit events")
+        })?;
+
+    let mut responses = Vec::with_capacity(events.len());
+    for event in events {
+        responses.push(AuditEventResponse::try_from_record(event)?);
+    }
+
+    Ok(Json(AuditEventListResponse {
+        events: responses,
         limit,
         offset,
     }))
@@ -2636,6 +2722,80 @@ mod tests {
         .await
         .expect_err("invalid dates");
         assert_eq!(err.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_audit_events_requires_admin() {
+        let state = setup_state().await;
+
+        let query = AuditEventListQuery {
+            customer_id: None,
+            actor: None,
+            event: None,
+            limit: None,
+            offset: None,
+        };
+
+        let err = list_audit_events(State(state), HeaderMap::new(), Query(query))
+            .await
+            .expect_err("missing admin auth");
+        assert_eq!(err.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn list_audit_events_filters_by_customer() {
+        let state = setup_state().await;
+        let now = now_ts_or_internal().expect("now");
+
+        let payload = json!({
+            "outcome": "accept",
+            "reason": "ok",
+            "api_key_id": null
+        })
+        .to_string();
+        state
+            .db
+            .insert_audit_event(
+                Some("audit-customer-1"),
+                "api_key",
+                "api_key.auth",
+                Some(&payload),
+                now - 10,
+            )
+            .await
+            .expect("insert audit event");
+        state
+            .db
+            .insert_audit_event(
+                Some("audit-customer-2"),
+                "api_key",
+                "api_key.auth",
+                None,
+                now,
+            )
+            .await
+            .expect("insert audit event");
+
+        let query = AuditEventListQuery {
+            customer_id: Some("audit-customer-1".to_string()),
+            actor: None,
+            event: None,
+            limit: None,
+            offset: None,
+        };
+        let Json(response) = list_audit_events(State(state), admin_headers(), Query(query))
+            .await
+            .expect("list audit events");
+        assert_eq!(response.events.len(), 1);
+        assert_eq!(
+            response.events[0].customer_id,
+            Some("audit-customer-1".to_string())
+        );
+        assert_eq!(response.events[0].event, "api_key.auth");
+        assert_eq!(
+            response.events[0].payload,
+            Some(json!({"outcome": "accept", "reason": "ok", "api_key_id": null}))
+        );
     }
 
     #[tokio::test]

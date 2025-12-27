@@ -5,8 +5,9 @@ use crate::auth::JwksCache;
 use crate::handlers::{
     admin_create_customer, admin_create_key, admin_revoke_key, auth_introspect,
     create_download_token, create_entitlement, create_release, delete_entitlement, delete_release,
-    list_entitlements, list_releases, presign_release_artifact_upload, publish_release,
-    register_release_artifact, resolve_download_token, unpublish_release, update_entitlement,
+    list_audit_events, list_entitlements, list_releases, presign_release_artifact_upload,
+    publish_release, register_release_artifact, resolve_download_token, unpublish_release,
+    update_entitlement,
 };
 
 #[derive(Clone)]
@@ -23,6 +24,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/admin/customers/{customer_id}/entitlements",
             get(list_entitlements).post(create_entitlement),
         )
+        .route("/v1/admin/audit-events", get(list_audit_events))
         .route(
             "/v1/admin/customers/{customer_id}/entitlements/{entitlement_id}",
             patch(update_entitlement).delete(delete_entitlement),
