@@ -1,0 +1,4 @@
+---
+- name: Placeholder for traefik role
+  ansible.builtin.debug:
+    msg: "TODO: implement Traefik provisioning tasks"

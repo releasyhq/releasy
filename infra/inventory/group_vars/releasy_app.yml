@@ -1,0 +1,6 @@
+# Releasy application host settings.
+releasy_server_port: 8080
+releasy_server_env_dir: "/etc/releasy"
+releasy_firewall_enabled: false
+releasy_firewall_ssh_sources: []
+releasy_healthcheck_path: "/v1/health"

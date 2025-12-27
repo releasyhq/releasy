@@ -1,0 +1,4 @@
+---
+- name: Placeholder for keycloak role
+  ansible.builtin.debug:
+    msg: "TODO: implement Keycloak provisioning tasks"

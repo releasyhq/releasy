@@ -1,0 +1,7 @@
+# Shared defaults for all hosts.
+releasy_server_image: "ghcr.io/releasyhq/releasy-server:latest"
+releasy_server_instances:
+  - blue
+  - green
+releasy_registry: "ghcr.io"
+releasy_bind_addr: "0.0.0.0:8080"

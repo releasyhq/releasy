@@ -1,0 +1,33 @@
+---
+- name: Provision Postgres
+  hosts: releasy_db
+  become: true
+  roles:
+    - role: tailscale
+      when: tailscale_enabled | default(false)
+    - role: releasy_postgres
+
+- name: Provision Releasy Core
+  hosts: releasy_app
+  become: true
+  serial: 1
+  roles:
+    - role: tailscale
+      when: tailscale_enabled | default(false)
+    - role: releasy_server
+
+- name: Provision Keycloak
+  hosts: keycloak
+  become: true
+  serial: 1
+  roles:
+    - role: tailscale
+      when: tailscale_enabled | default(false)
+    - role: keycloak
+      when: keycloak_enabled | default(false)
+
+- name: Provision Traefik
+  hosts: traefik
+  become: true
+  roles:
+    - role: traefik

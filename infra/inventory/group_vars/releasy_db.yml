@@ -1,0 +1,4 @@
+# Postgres host settings.
+postgres_port: 5432
+postgres_listen_addresses: "0.0.0.0"
+postgres_allowed_cidrs: []

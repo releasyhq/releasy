@@ -1,0 +1,4 @@
+---
+- name: Placeholder for releasy_postgres role
+  ansible.builtin.debug:
+    msg: "TODO: implement Postgres provisioning tasks"

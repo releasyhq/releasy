@@ -1,0 +1,4 @@
+# Optional IdP deployment settings.
+keycloak_enabled: false
+keycloak_hostname: "auth.example.com"
+keycloak_http_port: 8080

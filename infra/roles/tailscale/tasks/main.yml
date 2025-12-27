@@ -1,0 +1,4 @@
+---
+- name: Placeholder for tailscale role
+  ansible.builtin.debug:
+    msg: "TODO: implement Tailscale provisioning tasks"

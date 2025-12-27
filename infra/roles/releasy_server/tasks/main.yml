@@ -1,0 +1,4 @@
+---
+- name: Placeholder for releasy_server role
+  ansible.builtin.debug:
+    msg: "TODO: implement Releasy server deployment tasks"

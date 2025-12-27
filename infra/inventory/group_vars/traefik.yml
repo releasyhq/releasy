@@ -1,0 +1,4 @@
+# Traefik routing settings.
+traefik_public_host: "api.example.com"
+traefik_upstreams:
+  - "http://127.0.0.1:8080"
