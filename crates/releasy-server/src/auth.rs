@@ -1,4 +1,4 @@
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::TryRngCore;
 use rand::rngs::OsRng;
@@ -88,6 +88,21 @@ pub async fn authenticate_api_key(
     })
 }
 
+pub fn admin_authorize(headers: &HeaderMap, settings: &Settings) -> Result<(), ApiError> {
+    let expected = settings.admin_api_key.as_ref().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "admin api key not configured",
+        )
+    })?;
+    let candidate = admin_key_from_headers(headers).ok_or_else(ApiError::unauthorized)?;
+    if candidate == expected.as_str() {
+        Ok(())
+    } else {
+        Err(ApiError::unauthorized())
+    }
+}
+
 pub fn require_scopes(auth: &ApiKeyAuth, required: &[&str]) -> Result<(), ApiError> {
     for scope in required {
         if !auth.scopes.iter().any(|entry| entry == scope) {
@@ -97,7 +112,6 @@ pub fn require_scopes(auth: &ApiKeyAuth, required: &[&str]) -> Result<(), ApiErr
     Ok(())
 }
 
-#[allow(dead_code)]
 pub fn generate_api_key() -> Result<String, ApiError> {
     let mut bytes = [0u8; 32];
     OsRng.try_fill_bytes(&mut bytes).map_err(|err| {
@@ -108,7 +122,6 @@ pub fn generate_api_key() -> Result<String, ApiError> {
     Ok(format!("releasy_{token}"))
 }
 
-#[allow(dead_code)]
 pub fn api_key_prefix(key: &str) -> String {
     key.chars().take(12).collect()
 }
@@ -131,6 +144,26 @@ fn api_key_from_headers(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-releasy-api-key")
         .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn admin_key_from_headers(headers: &HeaderMap) -> Option<String> {
+    if let Some(bearer) = bearer_token(headers) {
+        return Some(bearer);
+    }
+    headers
+        .get("x-releasy-admin-key")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
@@ -199,6 +232,8 @@ async fn record_api_key_audit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Settings;
+    use axum::http::HeaderMap;
 
     #[test]
     fn hash_api_key_changes_with_pepper() {
@@ -236,5 +271,34 @@ mod tests {
     fn parse_scopes_rejects_invalid_json() {
         let result = parse_scopes("not-json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn admin_authorize_accepts_header() {
+        let settings = Settings {
+            bind_addr: "127.0.0.1:8080".to_string(),
+            log_level: "info".to_string(),
+            database_url: "sqlite::memory:".to_string(),
+            database_max_connections: 1,
+            admin_api_key: Some("secret".to_string()),
+            api_key_pepper: None,
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("x-releasy-admin-key", "secret".parse().unwrap());
+        assert!(admin_authorize(&headers, &settings).is_ok());
+    }
+
+    #[test]
+    fn admin_authorize_rejects_missing_key() {
+        let settings = Settings {
+            bind_addr: "127.0.0.1:8080".to_string(),
+            log_level: "info".to_string(),
+            database_url: "sqlite::memory:".to_string(),
+            database_max_connections: 1,
+            admin_api_key: Some("secret".to_string()),
+            api_key_pepper: None,
+        };
+        let headers = HeaderMap::new();
+        assert!(admin_authorize(&headers, &settings).is_err());
     }
 }

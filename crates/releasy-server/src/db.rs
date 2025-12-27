@@ -1,7 +1,11 @@
 use sqlx::{PgPool, Row, SqlitePool, postgres::PgPoolOptions, sqlite::SqlitePoolOptions};
 use uuid::Uuid;
 
-use crate::{config::Settings, models::ApiKeyAuthRecord, utils::now_ts};
+use crate::{
+    config::Settings,
+    models::{ApiKeyAuthRecord, ApiKeyRecord, Customer},
+    utils::now_ts,
+};
 
 #[derive(Clone)]
 pub enum Database {
@@ -83,6 +87,128 @@ impl Database {
                     expires_at: row.get("expires_at"),
                     revoked_at: row.get("revoked_at"),
                 }))
+            }
+        }
+    }
+
+    pub async fn customer_exists(&self, customer_id: &str) -> Result<bool, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let row = sqlx::query("SELECT 1 FROM customers WHERE id = $1 LIMIT 1")
+                    .bind(customer_id)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(row.is_some())
+            }
+            Database::Sqlite(pool) => {
+                let row = sqlx::query("SELECT 1 FROM customers WHERE id = ? LIMIT 1")
+                    .bind(customer_id)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(row.is_some())
+            }
+        }
+    }
+
+    pub async fn insert_customer(&self, customer: &Customer) -> Result<(), sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                sqlx::query(
+                    "INSERT INTO customers (id, name, plan, allowed_prefixes, created_at, suspended_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6)",
+                )
+                .bind(&customer.id)
+                .bind(&customer.name)
+                .bind(&customer.plan)
+                .bind(&customer.allowed_prefixes)
+                .bind(customer.created_at)
+                .bind(customer.suspended_at)
+                .execute(pool)
+                .await?;
+            }
+            Database::Sqlite(pool) => {
+                sqlx::query(
+                    "INSERT INTO customers (id, name, plan, allowed_prefixes, created_at, suspended_at) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&customer.id)
+                .bind(&customer.name)
+                .bind(&customer.plan)
+                .bind(&customer.allowed_prefixes)
+                .bind(customer.created_at)
+                .bind(customer.suspended_at)
+                .execute(pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn insert_api_key(&self, api_key: &ApiKeyRecord) -> Result<(), sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                sqlx::query(
+                    "INSERT INTO api_keys (id, customer_id, key_hash, key_prefix, name, key_type, scopes, expires_at, created_at, revoked_at, last_used_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                )
+                .bind(&api_key.id)
+                .bind(&api_key.customer_id)
+                .bind(&api_key.key_hash)
+                .bind(&api_key.key_prefix)
+                .bind(&api_key.name)
+                .bind(&api_key.key_type)
+                .bind(&api_key.scopes)
+                .bind(api_key.expires_at)
+                .bind(api_key.created_at)
+                .bind(api_key.revoked_at)
+                .bind(api_key.last_used_at)
+                .execute(pool)
+                .await?;
+            }
+            Database::Sqlite(pool) => {
+                sqlx::query(
+                    "INSERT INTO api_keys (id, customer_id, key_hash, key_prefix, name, key_type, scopes, expires_at, created_at, revoked_at, last_used_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&api_key.id)
+                .bind(&api_key.customer_id)
+                .bind(&api_key.key_hash)
+                .bind(&api_key.key_prefix)
+                .bind(&api_key.name)
+                .bind(&api_key.key_type)
+                .bind(&api_key.scopes)
+                .bind(api_key.expires_at)
+                .bind(api_key.created_at)
+                .bind(api_key.revoked_at)
+                .bind(api_key.last_used_at)
+                .execute(pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn revoke_api_key(&self, key_id: &str, timestamp: i64) -> Result<u64, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let result = sqlx::query(
+                    "UPDATE api_keys SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL",
+                )
+                .bind(timestamp)
+                .bind(key_id)
+                .execute(pool)
+                .await?;
+                Ok(result.rows_affected())
+            }
+            Database::Sqlite(pool) => {
+                let result = sqlx::query(
+                    "UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                )
+                .bind(timestamp)
+                .bind(key_id)
+                .execute(pool)
+                .await?;
+                Ok(result.rows_affected())
             }
         }
     }

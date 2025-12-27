@@ -6,6 +6,7 @@ pub struct Settings {
     pub log_level: String,
     pub database_url: String,
     pub database_max_connections: u32,
+    pub admin_api_key: Option<String>,
     pub api_key_pepper: Option<String>,
 }
 
@@ -20,6 +21,7 @@ impl Settings {
             .map(|value| parse_u32("RELEASY_DATABASE_MAX_CONNECTIONS", &value))
             .transpose()?
             .unwrap_or(5);
+        let admin_api_key = env::var("RELEASY_ADMIN_API_KEY").ok();
         let api_key_pepper = env::var("RELEASY_API_KEY_PEPPER").ok();
 
         Ok(Self {
@@ -27,6 +29,7 @@ impl Settings {
             log_level,
             database_url,
             database_max_connections,
+            admin_api_key,
             api_key_pepper,
         })
     }
