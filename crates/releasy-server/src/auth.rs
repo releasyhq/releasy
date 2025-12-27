@@ -166,6 +166,25 @@ pub async fn authenticate_api_key(
         }
     };
 
+    let updated = db
+        .update_api_key_last_used(&record.id, now)
+        .await
+        .map_err(|err| {
+            error!("failed to update api key last_used_at: {err}");
+            ApiError::internal("failed to update api key usage")
+        })?;
+    if updated == 0 {
+        record_api_key_audit(
+            db,
+            Some(&record.customer_id),
+            Some(&record.id),
+            "reject",
+            "not_found",
+        )
+        .await;
+        return Err(ApiError::unauthorized());
+    }
+
     record_api_key_audit(
         db,
         Some(&record.customer_id),
@@ -496,6 +515,10 @@ async fn record_api_key_audit(
 mod tests {
     use super::*;
     use crate::config::Settings;
+    use crate::db::Database;
+    use crate::models::{
+        ApiKeyRecord, Customer, DEFAULT_API_KEY_TYPE, default_scopes, scopes_to_json,
+    };
     use axum::http::HeaderMap;
     use serde_json::json;
 
@@ -513,6 +536,25 @@ mod tests {
             operator_resource: None,
             operator_jwks_ttl_seconds: 300,
             operator_jwt_leeway_seconds: 0,
+        }
+    }
+
+    async fn setup_db(settings: &Settings) -> Database {
+        let db = Database::connect(settings).await.expect("db connect");
+        db.migrate().await.expect("db migrate");
+        db
+    }
+
+    async fn fetch_last_used_at(db: &Database, key_id: &str) -> Option<i64> {
+        match db {
+            Database::Sqlite(pool) => {
+                sqlx::query_scalar("SELECT last_used_at FROM api_keys WHERE id = ?")
+                    .bind(key_id)
+                    .fetch_one(pool)
+                    .await
+                    .expect("last_used_at")
+            }
+            Database::Postgres(_) => panic!("sqlite expected"),
         }
     }
 
@@ -549,6 +591,95 @@ mod tests {
             validate_api_key(&record, 0),
             Err(ApiKeyInvalidReason::Revoked)
         );
+    }
+
+    #[tokio::test]
+    async fn authenticate_api_key_updates_last_used_at() {
+        let settings = test_settings();
+        let db = setup_db(&settings).await;
+
+        let customer = Customer {
+            id: "customer".to_string(),
+            name: "Customer".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: 1,
+            suspended_at: None,
+        };
+        db.insert_customer(&customer).await.expect("customer");
+
+        let raw_key = "releasy_test_key";
+        let scopes = default_scopes();
+        let record = ApiKeyRecord {
+            id: "key".to_string(),
+            customer_id: customer.id.clone(),
+            key_hash: hash_api_key(raw_key, None),
+            key_prefix: api_key_prefix(raw_key),
+            name: None,
+            key_type: DEFAULT_API_KEY_TYPE.to_string(),
+            scopes: scopes_to_json(&scopes).expect("scopes"),
+            expires_at: None,
+            created_at: 1,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        let key_id = record.id.clone();
+        db.insert_api_key(&record).await.expect("api key");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-releasy-api-key", raw_key.parse().unwrap());
+        let auth = authenticate_api_key(&headers, &settings, &db)
+            .await
+            .expect("auth");
+        assert_eq!(auth.api_key_id, key_id);
+
+        let last_used_at = fetch_last_used_at(&db, &key_id).await;
+        assert!(last_used_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn authenticate_api_key_does_not_update_last_used_on_failure() {
+        let settings = test_settings();
+        let db = setup_db(&settings).await;
+
+        let customer = Customer {
+            id: "customer".to_string(),
+            name: "Customer".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: 1,
+            suspended_at: None,
+        };
+        db.insert_customer(&customer).await.expect("customer");
+
+        let raw_key = "releasy_test_key";
+        let scopes = default_scopes();
+        let record = ApiKeyRecord {
+            id: "key".to_string(),
+            customer_id: customer.id.clone(),
+            key_hash: hash_api_key(raw_key, None),
+            key_prefix: api_key_prefix(raw_key),
+            name: None,
+            key_type: DEFAULT_API_KEY_TYPE.to_string(),
+            scopes: scopes_to_json(&scopes).expect("scopes"),
+            expires_at: None,
+            created_at: 1,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        let key_id = record.id.clone();
+        db.insert_api_key(&record).await.expect("api key");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-releasy-api-key", "releasy_wrong".parse().unwrap());
+        assert!(
+            authenticate_api_key(&headers, &settings, &db)
+                .await
+                .is_err()
+        );
+
+        let last_used_at = fetch_last_used_at(&db, &key_id).await;
+        assert!(last_used_at.is_none());
     }
 
     #[test]

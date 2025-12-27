@@ -212,6 +212,31 @@ impl Database {
         }
     }
 
+    pub async fn update_api_key_last_used(
+        &self,
+        key_id: &str,
+        timestamp: i64,
+    ) -> Result<u64, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let result = sqlx::query("UPDATE api_keys SET last_used_at = $1 WHERE id = $2")
+                    .bind(timestamp)
+                    .bind(key_id)
+                    .execute(pool)
+                    .await?;
+                Ok(result.rows_affected())
+            }
+            Database::Sqlite(pool) => {
+                let result = sqlx::query("UPDATE api_keys SET last_used_at = ? WHERE id = ?")
+                    .bind(timestamp)
+                    .bind(key_id)
+                    .execute(pool)
+                    .await?;
+                Ok(result.rows_affected())
+            }
+        }
+    }
+
     pub async fn insert_release(&self, release: &ReleaseRecord) -> Result<(), sqlx::Error> {
         match self {
             Database::Postgres(pool) => {
