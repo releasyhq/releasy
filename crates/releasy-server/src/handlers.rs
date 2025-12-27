@@ -180,14 +180,13 @@ pub async fn admin_create_key(
     let scopes_json =
         scopes_to_json(&scopes).map_err(|_| ApiError::internal("failed to encode scopes"))?;
 
-    let key_type = payload
-        .key_type
-        .unwrap_or_else(|| DEFAULT_API_KEY_TYPE.to_string());
+    let key_type = normalize_key_type(payload.key_type)?;
 
     let raw_key = generate_api_key()?;
     let key_hash = hash_api_key(&raw_key, state.settings.api_key_pepper.as_deref());
     let key_prefix = api_key_prefix(&raw_key);
 
+    let expires_at = validate_expires_at(payload.expires_at)?;
     let record = ApiKeyRecord {
         id: Uuid::new_v4().to_string(),
         customer_id: customer_id.to_string(),
@@ -196,7 +195,7 @@ pub async fn admin_create_key(
         name: payload.name,
         key_type: key_type.clone(),
         scopes: scopes_json,
-        expires_at: payload.expires_at,
+        expires_at,
         created_at: now_ts_or_internal()?,
         revoked_at: None,
         last_used_at: None,
@@ -420,6 +419,35 @@ fn resolve_pagination(limit: Option<u32>, offset: Option<u32>) -> Result<(i64, i
     Ok((limit as i64, offset as i64))
 }
 
+fn normalize_key_type(value: Option<String>) -> Result<String, ApiError> {
+    let value = value.unwrap_or_else(|| DEFAULT_API_KEY_TYPE.to_string());
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::bad_request("key_type is required"));
+    }
+    let normalized = trimmed.to_ascii_lowercase();
+    match normalized.as_str() {
+        "human" | "ci" | "integration" => Ok(normalized),
+        _ => Err(ApiError::bad_request("invalid key_type")),
+    }
+}
+
+fn validate_expires_at(expires_at: Option<i64>) -> Result<Option<i64>, ApiError> {
+    const MAX_EXPIRES_AT_SECONDS: i64 = 10_000_000_000;
+    if let Some(expires_at) = expires_at {
+        if !(0..=MAX_EXPIRES_AT_SECONDS).contains(&expires_at) {
+            return Err(ApiError::bad_request(
+                "expires_at must be a unix timestamp in seconds",
+            ));
+        }
+        let now = now_ts_or_internal()?;
+        if expires_at <= now {
+            return Err(ApiError::bad_request("expires_at must be in the future"));
+        }
+    }
+    Ok(expires_at)
+}
+
 fn require_release_list_role(role: AdminRole) -> Result<(), ApiError> {
     match role {
         AdminRole::PlatformAdmin | AdminRole::PlatformSupport | AdminRole::ReleasePublisher => {
@@ -481,4 +509,50 @@ async fn apply_release_action_with_rbac(
     release.status = next.as_str().to_string();
     release.published_at = published_at;
     Ok(Json(ReleaseResponse::from_record(release)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_key_type_accepts_known_values() {
+        let value = Some("  Human ".to_string());
+        assert_eq!(normalize_key_type(value).expect("key type"), "human");
+    }
+
+    #[test]
+    fn normalize_key_type_rejects_empty() {
+        let value = Some("   ".to_string());
+        assert!(normalize_key_type(value).is_err());
+    }
+
+    #[test]
+    fn normalize_key_type_rejects_unknown() {
+        let value = Some("other".to_string());
+        assert!(normalize_key_type(value).is_err());
+    }
+
+    #[test]
+    fn validate_expires_at_rejects_past() {
+        let now = now_ts_or_internal().expect("now");
+        let expires_at = Some(now - 1);
+        assert!(validate_expires_at(expires_at).is_err());
+    }
+
+    #[test]
+    fn validate_expires_at_rejects_too_large() {
+        let expires_at = Some(10_000_000_001);
+        assert!(validate_expires_at(expires_at).is_err());
+    }
+
+    #[test]
+    fn validate_expires_at_accepts_future() {
+        let now = now_ts_or_internal().expect("now");
+        let expires_at = Some(now + 60);
+        assert_eq!(
+            validate_expires_at(expires_at).expect("expires"),
+            expires_at
+        );
+    }
 }
