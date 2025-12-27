@@ -1,59 +1,39 @@
-use std::env;
+mod app;
+mod auth;
+mod config;
+mod db;
+mod errors;
+mod handlers;
+mod models;
+mod utils;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PortError {
-    Empty,
-    NotANumber,
-    OutOfRange,
-}
+use crate::config::Settings;
+use crate::db::Database;
+use std::net::SocketAddr;
+use tracing_subscriber::EnvFilter;
 
-fn parse_port(value: &str) -> Result<u16, PortError> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(PortError::Empty);
-    }
+#[tokio::main]
+async fn main() -> Result<(), String> {
+    let settings = Settings::from_env()?;
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(settings.log_level.clone()));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+    let addr: SocketAddr = settings
+        .bind_addr
+        .parse()
+        .map_err(|_| format!("invalid RELEASY_BIND_ADDR: {}", settings.bind_addr))?;
+    let db = Database::connect(&settings).await?;
+    db.migrate().await?;
 
-    let parsed: u16 = trimmed.parse().map_err(|_| PortError::NotANumber)?;
-    if parsed == 0 {
-        return Err(PortError::OutOfRange);
-    }
+    let state = app::AppState { db, settings };
+    let app = app::router(state);
 
-    Ok(parsed)
-}
-
-fn port_from_env() -> Result<u16, PortError> {
-    let raw = env::var("RELEASY_PORT").unwrap_or_else(|_| "8080".to_string());
-    parse_port(&raw)
-}
-
-fn main() {
-    let port = match port_from_env() {
-        Ok(port) => port,
-        Err(error) => {
-            eprintln!("invalid RELEASY_PORT: {:?}", error);
-            std::process::exit(1);
-        }
-    };
-
-    println!("releasy-server starting on port {port}");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_port_accepts_valid() {
-        assert_eq!(parse_port("8080"), Ok(8080));
-    }
-
-    #[test]
-    fn parse_port_rejects_zero() {
-        assert_eq!(parse_port("0"), Err(PortError::OutOfRange));
-    }
-
-    #[test]
-    fn parse_port_rejects_non_numeric() {
-        assert_eq!(parse_port("nope"), Err(PortError::NotANumber));
-    }
+    tracing::info!("releasy-server listening on {addr}");
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|err| format!("bind failed: {err}"))?;
+    axum::serve(listener, app)
+        .await
+        .map_err(|err| format!("server error: {err}"))?;
+    Ok(())
 }
