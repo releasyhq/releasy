@@ -14,11 +14,15 @@ Releasy is an API-first platform to manage:
 - Designed for CI/CD pipelines
 - Open Core with Enterprise extensions
 
+## Documentation
+
+- [Configuration](docs/configuration.md) – Environment variables reference
+- [Admin Bootstrap](docs/admin-bootstrap.md) – Initial setup and API key management
+- [Operator Auth](docs/operator-auth.md) – JWT/JWKS authentication and RBAC
+- [Release API](docs/release-api.md) – Release lifecycle endpoints
+- [Artifacts](docs/artifacts.md) – Presigned uploads and artifact registration
+- [Introspection](docs/introspect-api.md) – API key introspection
+s
 ## Status
 
 🚧 Early development – feedback welcome
-
-## Artifacts
-
-Presigned artifact uploads and registration are documented in
-`docs/artifacts.md`.

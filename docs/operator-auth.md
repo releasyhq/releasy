@@ -33,15 +33,28 @@ Send operator JWTs as Bearer tokens:
 Authorization: Bearer <operator-jwt>
 ```
 
-Admin bootstrap keys continue to work via:
+Admin bootstrap keys can be sent via header or as non-JWT Bearer token:
 
 ```
 x-releasy-admin-key: <admin-key>
 ```
 
-If both are present, Releasy tries the operator JWT first. If JWKS
-is not configured or JWT validation fails, Releasy falls back to the
-admin bootstrap key when provided.
+or:
+
+```
+Authorization: Bearer <admin-key>
+```
+
+### Authentication Priority
+
+1. If `x-releasy-admin-key` header is present, Releasy validates the admin
+   key first and grants `platform_admin` role on success.
+2. If `Authorization: Bearer` contains a JWT (detected by two dots), Releasy
+   validates via JWKS and extracts roles from claims.
+3. If the Bearer token is not a JWT, Releasy treats it as an admin key.
+
+This means admin keys always take priority when the `x-releasy-admin-key`
+header is explicitly set.
 
 ## Role Extraction
 

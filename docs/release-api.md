@@ -8,11 +8,11 @@ supports filtering/pagination for operators.
 Release endpoints accept either an operator JWT or the admin bootstrap key.
 
 - Operator JWT (preferred):
-  - Header: `Authorization: Bearer <jwt>`
-  - Roles: `platform_admin`, `platform_support`, `release_publisher`
+    - Header: `Authorization: Bearer <jwt>`
+    - Roles: `platform_admin`, `platform_support`, `release_publisher`
 - Admin key (bootstrap):
-  - Header: `x-releasy-admin-key: <admin_key>`
-  - Or `Authorization: Bearer <admin_key>` (non-JWT value)
+    - Header: `x-releasy-admin-key: <admin_key>`
+    - Or `Authorization: Bearer <admin_key>` (non-JWT value)
 
 Role requirements:
 
@@ -77,6 +77,11 @@ curl -X POST http://localhost:8080/v1/releases \
   -d '{"product":"releasy","version":"1.2.3"}'
 ```
 
+Notes:
+
+- Returns `409 Conflict` with `"release already exists"` if a release with
+  the same product and version already exists.
+
 ### List releases
 
 `GET /v1/releases`
@@ -130,6 +135,8 @@ Notes:
 
 - If the release is already published, the API returns `400` with
   `"release already published"`.
+- Returns `409 Conflict` with `"release status changed, retry"` if a
+  concurrent update occurred. Retry the request in this case.
 
 ### Unpublish release
 
@@ -147,6 +154,8 @@ Notes:
 - Requires `platform_admin`.
 - If the release is already draft, the API returns `400` with
   `"release already draft"`.
+- Returns `409 Conflict` with `"release status changed, retry"` if a
+  concurrent update occurred. Retry the request in this case.
 
 ### Delete release
 

@@ -3,6 +3,15 @@
 Releasy supports presigned uploads to S3-compatible storage and
 registering artifacts against a release.
 
+## Authentication and RBAC
+
+Artifact endpoints require operator authentication with either:
+
+- `platform_admin` role, or
+- `release_publisher` role
+
+See [operator-auth.md](operator-auth.md) for authentication details.
+
 ## Configuration
 
 Set artifact storage settings via environment variables:
@@ -76,6 +85,16 @@ POST /v1/releases/{release_id}/artifacts
 
 Request body:
 
+| Field         | Type    | Required | Description                           |
+|---------------|---------|----------|---------------------------------------|
+| `artifact_id` | string  | yes      | UUID from presign response            |
+| `object_key`  | string  | yes      | Object key from presign response      |
+| `checksum`    | string  | yes      | SHA256 checksum (64 hex characters)   |
+| `size`        | integer | yes      | File size in bytes (must be positive) |
+| `platform`    | string  | yes      | Platform identifier                   |
+
+Example request body:
+
 ```json
 {
   "artifact_id": "uuid",
@@ -109,3 +128,14 @@ curl -X POST \
   -d '{"artifact_id":"...","object_key":"...","checksum":"...","size":1024,"platform":"linux-x86_64"}' \
   http://localhost:8080/v1/releases/$RELEASE_ID/artifacts
 ```
+
+## Error Responses
+
+| Status                    | Message                                         | Cause                            |
+|---------------------------|-------------------------------------------------|----------------------------------|
+| `400 Bad Request`         | `checksum must be a 64 character hex string`    | Invalid checksum format          |
+| `400 Bad Request`         | `size must be positive`                         | Size is zero or negative         |
+| `400 Bad Request`         | `object_key does not match release or platform` | Object key doesn't match presign |
+| `404 Not Found`           | `release not found`                             | Release ID doesn't exist         |
+| `409 Conflict`            | `artifact already exists`                       | Duplicate artifact registration  |
+| `503 Service Unavailable` | `artifact storage not configured`               | Missing S3 configuration         |
