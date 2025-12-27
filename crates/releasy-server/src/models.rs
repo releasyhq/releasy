@@ -87,6 +87,18 @@ pub struct DownloadTokenRecord {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdempotencyRecord {
+    pub key: String,
+    pub endpoint: String,
+    pub request_hash: String,
+    pub response_status: Option<i32>,
+    pub response_body: Option<String>,
+    pub state: String,
+    pub created_at: i64,
+    pub expires_at: i64,
+}
+
 pub const DEFAULT_API_KEY_TYPE: &str = "human";
 
 pub const ALLOWED_SCOPES: &[&str] = &[

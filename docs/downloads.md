@@ -24,6 +24,10 @@ Headers:
 
 - `x-releasy-api-key: <api_key>` (must include `downloads:token` scope)
 
+Notes:
+
+- Supports `Idempotency-Key` (see `docs/api-conventions.md`).
+
 Request body:
 
 ```json

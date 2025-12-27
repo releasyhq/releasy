@@ -14,6 +14,12 @@ appropriate role).
 
 `GET /v1/admin/customers/{customer_id}/entitlements`
 
+Query parameters:
+
+- `product`: optional product filter
+- `limit`: optional page size (default `50`, max `200`, must be > 0)
+- `offset`: optional page offset (default `0`)
+
 Response body:
 
 ```json
@@ -29,13 +35,19 @@ Response body:
         "tier": "pro"
       }
     }
-  ]
+  ],
+  "limit": 50,
+  "offset": 0
 }
 ```
 
 ## Create entitlement
 
 `POST /v1/admin/customers/{customer_id}/entitlements`
+
+Notes:
+
+- Supports `Idempotency-Key` (see `docs/api-conventions.md`).
 
 Request body:
 

@@ -1,12 +1,16 @@
 use axum::extract::{Json, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::IntoResponse;
+use hex::encode as hex_encode;
 use s3::Bucket;
 use s3::Region;
 use s3::creds::Credentials;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use std::future::Future;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
@@ -33,13 +37,13 @@ use crate::utils::now_ts;
 #[cfg(test)]
 static RELEASE_UPDATE_BARRIER: Mutex<Option<Arc<Barrier>>> = Mutex::new(None);
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub(crate) struct AdminCreateCustomerRequest {
     name: String,
     plan: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct AdminCreateCustomerResponse {
     id: String,
     name: String,
@@ -47,7 +51,7 @@ pub(crate) struct AdminCreateCustomerResponse {
     created_at: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub(crate) struct AdminCreateKeyRequest {
     customer_id: String,
     name: Option<String>,
@@ -76,7 +80,7 @@ pub(crate) struct AdminRevokeKeyResponse {
     api_key_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub(crate) struct EntitlementCreateRequest {
     product: String,
     starts_at: i64,
@@ -84,7 +88,7 @@ pub(crate) struct EntitlementCreateRequest {
     metadata: Option<Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub(crate) struct EntitlementUpdateRequest {
     product: Option<String>,
     starts_at: Option<i64>,
@@ -94,7 +98,7 @@ pub(crate) struct EntitlementUpdateRequest {
     metadata: Option<Option<Value>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct EntitlementResponse {
     id: String,
     customer_id: String,
@@ -127,9 +131,18 @@ impl EntitlementResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct EntitlementListResponse {
     entitlements: Vec<EntitlementResponse>,
+    limit: i64,
+    offset: i64,
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct EntitlementListQuery {
+    product: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub(crate) struct ReleaseCreateRequest {
     product: String,
     version: String,
@@ -145,7 +158,7 @@ pub(crate) struct ReleaseListQuery {
     offset: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ReleaseResponse {
     id: String,
     product: String,
@@ -170,7 +183,7 @@ impl ReleaseResponse {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ArtifactSummary {
     id: String,
     object_key: String,
@@ -198,13 +211,13 @@ pub(crate) struct ReleaseListResponse {
     offset: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub(crate) struct ArtifactPresignRequest {
     filename: String,
     platform: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ArtifactPresignResponse {
     artifact_id: String,
     object_key: String,
@@ -212,7 +225,7 @@ pub(crate) struct ArtifactPresignResponse {
     expires_at: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub(crate) struct ArtifactRegisterRequest {
     artifact_id: String,
     object_key: String,
@@ -221,7 +234,7 @@ pub(crate) struct ArtifactRegisterRequest {
     platform: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ArtifactRegisterResponse {
     id: String,
     release_id: String,
@@ -246,14 +259,14 @@ impl ArtifactRegisterResponse {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub(crate) struct DownloadTokenRequest {
     artifact_id: String,
     purpose: Option<String>,
     expires_in_seconds: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct DownloadTokenResponse {
     download_url: String,
     expires_at: i64,
@@ -267,42 +280,56 @@ pub async fn admin_create_customer(
     let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
     require_admin(role)?;
 
-    let name = payload.name.trim();
-    if name.is_empty() {
-        return Err(ApiError::bad_request("name is required"));
-    }
+    let payload_for_idempotency = payload.clone();
+    let response = with_idempotency(
+        &state,
+        &headers,
+        "admin_create_customer",
+        "",
+        &payload_for_idempotency,
+        || async {
+            let name = payload.name.trim();
+            if name.is_empty() {
+                return Err(ApiError::bad_request("name is required"));
+            }
 
-    let plan = payload
-        .plan
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+            let plan = payload
+                .plan
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
 
-    let customer = Customer {
-        id: Uuid::new_v4().to_string(),
-        name: name.to_string(),
-        plan,
-        allowed_prefixes: None,
-        created_at: now_ts_or_internal()?,
-        suspended_at: None,
-    };
+            let customer = Customer {
+                id: Uuid::new_v4().to_string(),
+                name: name.to_string(),
+                plan,
+                allowed_prefixes: None,
+                created_at: now_ts_or_internal()?,
+                suspended_at: None,
+            };
 
-    state.db.insert_customer(&customer).await.map_err(|err| {
-        error!("failed to insert customer: {err}");
-        ApiError::internal("failed to create customer")
-    })?;
+            state.db.insert_customer(&customer).await.map_err(|err| {
+                error!("failed to insert customer: {err}");
+                ApiError::internal("failed to create customer")
+            })?;
 
-    Ok(Json(AdminCreateCustomerResponse {
-        id: customer.id,
-        name: customer.name,
-        plan: customer.plan,
-        created_at: customer.created_at,
-    }))
+            Ok(AdminCreateCustomerResponse {
+                id: customer.id,
+                name: customer.name,
+                plan: customer.plan,
+                created_at: customer.created_at,
+            })
+        },
+    )
+    .await?;
+
+    Ok(Json(response))
 }
 
 pub async fn list_entitlements(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(customer_id): Path<String>,
+    Query(query): Query<EntitlementListQuery>,
 ) -> Result<Json<EntitlementListResponse>, ApiError> {
     let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
     require_support_or_admin(role)?;
@@ -313,9 +340,11 @@ pub async fn list_entitlements(
     }
     ensure_customer_exists(&state, customer_id).await?;
 
+    let product = normalize_optional("product", query.product)?;
+    let (limit, offset) = resolve_pagination(query.limit, query.offset)?;
     let entitlements = state
         .db
-        .list_entitlements_by_customer(customer_id)
+        .list_entitlements_by_customer(customer_id, product.as_deref(), Some(limit), Some(offset))
         .await
         .map_err(|err| {
             error!("failed to list entitlements: {err}");
@@ -329,6 +358,8 @@ pub async fn list_entitlements(
 
     Ok(Json(EntitlementListResponse {
         entitlements: responses,
+        limit,
+        offset,
     }))
 }
 
@@ -338,44 +369,58 @@ pub async fn create_entitlement(
     Path(customer_id): Path<String>,
     Json(payload): Json<EntitlementCreateRequest>,
 ) -> Result<Json<EntitlementResponse>, ApiError> {
-    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
-    require_admin(role)?;
-
     let customer_id = customer_id.trim();
     if customer_id.is_empty() {
         return Err(ApiError::bad_request("customer_id is required"));
     }
+
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_admin(role)?;
+
     ensure_customer_exists(&state, customer_id).await?;
 
-    let product = normalize_required("product", payload.product)?;
-    if payload.starts_at <= 0 {
-        return Err(ApiError::bad_request("starts_at must be positive"));
-    }
-    if let Some(ends_at) = payload.ends_at
-        && ends_at < payload.starts_at
-    {
-        return Err(ApiError::bad_request(
-            "ends_at must be greater than or equal to starts_at",
-        ));
-    }
+    let payload_for_idempotency = payload.clone();
+    let response = with_idempotency(
+        &state,
+        &headers,
+        "create_entitlement",
+        customer_id,
+        &payload_for_idempotency,
+        || async {
+            let product = normalize_required("product", payload.product)?;
+            if payload.starts_at <= 0 {
+                return Err(ApiError::bad_request("starts_at must be positive"));
+            }
+            if let Some(ends_at) = payload.ends_at
+                && ends_at < payload.starts_at
+            {
+                return Err(ApiError::bad_request(
+                    "ends_at must be greater than or equal to starts_at",
+                ));
+            }
 
-    let metadata = payload.metadata.map(metadata_to_string).transpose()?;
+            let metadata = payload.metadata.map(metadata_to_string).transpose()?;
 
-    let record = EntitlementRecord {
-        id: Uuid::new_v4().to_string(),
-        customer_id: customer_id.to_string(),
-        product,
-        starts_at: payload.starts_at,
-        ends_at: payload.ends_at,
-        metadata,
-    };
+            let record = EntitlementRecord {
+                id: Uuid::new_v4().to_string(),
+                customer_id: customer_id.to_string(),
+                product,
+                starts_at: payload.starts_at,
+                ends_at: payload.ends_at,
+                metadata,
+            };
 
-    state.db.insert_entitlement(&record).await.map_err(|err| {
-        error!("failed to create entitlement: {err}");
-        ApiError::internal("failed to create entitlement")
-    })?;
+            state.db.insert_entitlement(&record).await.map_err(|err| {
+                error!("failed to create entitlement: {err}");
+                ApiError::internal("failed to create entitlement")
+            })?;
 
-    Ok(Json(EntitlementResponse::try_from_record(record)?))
+            EntitlementResponse::try_from_record(record)
+        },
+    )
+    .await?;
+
+    Ok(Json(response))
 }
 
 pub async fn update_entitlement(
@@ -483,6 +528,12 @@ pub async fn admin_create_key(
     let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
     require_admin(role)?;
 
+    if extract_idempotency_key(&headers)?.is_some() {
+        return Err(ApiError::bad_request(
+            "idempotency-key not supported for admin key creation",
+        ));
+    }
+
     let customer_id = payload.customer_id.trim();
     if customer_id.is_empty() {
         return Err(ApiError::bad_request("customer_id is required"));
@@ -584,29 +635,42 @@ pub async fn create_release(
     let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
     require_release_publisher(role)?;
 
-    let product = normalize_required("product", payload.product)?;
-    let version = normalize_required("version", payload.version)?;
+    let payload_for_idempotency = payload.clone();
+    let response = with_idempotency(
+        &state,
+        &headers,
+        "create_release",
+        "",
+        &payload_for_idempotency,
+        || async {
+            let product = normalize_required("product", payload.product)?;
+            let version = normalize_required("version", payload.version)?;
 
-    let record = ReleaseRecord {
-        id: Uuid::new_v4().to_string(),
-        product,
-        version,
-        status: ReleaseStatus::Draft.as_str().to_string(),
-        created_at: now_ts_or_internal()?,
-        published_at: None,
-    };
+            let record = ReleaseRecord {
+                id: Uuid::new_v4().to_string(),
+                product,
+                version,
+                status: ReleaseStatus::Draft.as_str().to_string(),
+                created_at: now_ts_or_internal()?,
+                published_at: None,
+            };
 
-    state.db.insert_release(&record).await.map_err(|err| {
-        if let sqlx::Error::Database(db_err) = &err
-            && db_err.is_unique_violation()
-        {
-            return ApiError::new(StatusCode::CONFLICT, "release already exists");
-        }
-        error!("failed to create release: {err}");
-        ApiError::internal("failed to create release")
-    })?;
+            state.db.insert_release(&record).await.map_err(|err| {
+                if let sqlx::Error::Database(db_err) = &err
+                    && db_err.is_unique_violation()
+                {
+                    return ApiError::new(StatusCode::CONFLICT, "release already exists");
+                }
+                error!("failed to create release: {err}");
+                ApiError::internal("failed to create release")
+            })?;
 
-    Ok(Json(ReleaseResponse::from_record(record, None)))
+            Ok(ReleaseResponse::from_record(record, None))
+        },
+    )
+    .await?;
+
+    Ok(Json(response))
 }
 
 pub async fn presign_release_artifact_upload(
@@ -618,43 +682,58 @@ pub async fn presign_release_artifact_upload(
     let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
     require_release_publisher(role)?;
 
-    let artifact_settings = artifact_settings(&state.settings)?;
-    let release = state
-        .db
-        .get_release(&release_id)
-        .await
-        .map_err(|err| {
-            error!("failed to get release: {err}");
-            ApiError::internal("failed to get release")
-        })?
-        .ok_or_else(|| ApiError::not_found("release not found"))?;
+    let payload_for_idempotency = payload.clone();
+    let response = with_idempotency(
+        &state,
+        &headers,
+        "presign_release_artifact_upload",
+        &release_id,
+        &payload_for_idempotency,
+        || async {
+            let artifact_settings = artifact_settings(&state.settings)?;
+            let release = state
+                .db
+                .get_release(&release_id)
+                .await
+                .map_err(|err| {
+                    error!("failed to get release: {err}");
+                    ApiError::internal("failed to get release")
+                })?
+                .ok_or_else(|| ApiError::not_found("release not found"))?;
 
-    let filename = normalize_required("filename", payload.filename)?;
-    let platform = normalize_required("platform", payload.platform)?;
-    let artifact_id = Uuid::new_v4().to_string();
-    let object_key = build_artifact_object_key(&release, &platform, &artifact_id, &filename)?;
+            let filename = normalize_required("filename", payload.filename)?;
+            let platform = normalize_required("platform", payload.platform)?;
+            let artifact_id = Uuid::new_v4().to_string();
+            let object_key =
+                build_artifact_object_key(&release, &platform, &artifact_id, &filename)?;
 
-    let bucket = build_artifact_bucket(artifact_settings)?;
-    let upload_url = bucket
-        .presign_put(
-            &object_key,
-            artifact_settings.presign_expires_seconds,
-            None,
-            None,
-        )
-        .await
-        .map_err(|err| {
-            error!("failed to presign artifact upload: {err}");
-            ApiError::internal("failed to presign upload")
-        })?;
-    let expires_at = now_ts_or_internal()? + i64::from(artifact_settings.presign_expires_seconds);
+            let bucket = build_artifact_bucket(artifact_settings)?;
+            let upload_url = bucket
+                .presign_put(
+                    &object_key,
+                    artifact_settings.presign_expires_seconds,
+                    None,
+                    None,
+                )
+                .await
+                .map_err(|err| {
+                    error!("failed to presign artifact upload: {err}");
+                    ApiError::internal("failed to presign upload")
+                })?;
+            let expires_at =
+                now_ts_or_internal()? + i64::from(artifact_settings.presign_expires_seconds);
 
-    Ok(Json(ArtifactPresignResponse {
-        artifact_id,
-        object_key,
-        upload_url,
-        expires_at,
-    }))
+            Ok(ArtifactPresignResponse {
+                artifact_id,
+                object_key,
+                upload_url,
+                expires_at,
+            })
+        },
+    )
+    .await?;
+
+    Ok(Json(response))
 }
 
 pub async fn register_release_artifact(
@@ -666,54 +745,67 @@ pub async fn register_release_artifact(
     let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
     require_release_publisher(role)?;
 
-    let _artifact_settings = artifact_settings(&state.settings)?;
-    let release = state
-        .db
-        .get_release(&release_id)
-        .await
-        .map_err(|err| {
-            error!("failed to get release: {err}");
-            ApiError::internal("failed to get release")
-        })?
-        .ok_or_else(|| ApiError::not_found("release not found"))?;
+    let payload_for_idempotency = payload.clone();
+    let response = with_idempotency(
+        &state,
+        &headers,
+        "register_release_artifact",
+        &release_id,
+        &payload_for_idempotency,
+        || async {
+            let _artifact_settings = artifact_settings(&state.settings)?;
+            let release = state
+                .db
+                .get_release(&release_id)
+                .await
+                .map_err(|err| {
+                    error!("failed to get release: {err}");
+                    ApiError::internal("failed to get release")
+                })?
+                .ok_or_else(|| ApiError::not_found("release not found"))?;
 
-    let artifact_id = normalize_required("artifact_id", payload.artifact_id)?;
-    let artifact_uuid = Uuid::parse_str(&artifact_id)
-        .map_err(|_| ApiError::bad_request("artifact_id must be a valid UUID"))?;
-    let platform = normalize_required("platform", payload.platform)?;
-    let object_key = normalize_required("object_key", payload.object_key)?;
-    let checksum = normalize_checksum(&payload.checksum)?;
-    let size = validate_artifact_size(payload.size)?;
+            let artifact_id = normalize_required("artifact_id", payload.artifact_id)?;
+            let artifact_uuid = Uuid::parse_str(&artifact_id)
+                .map_err(|_| ApiError::bad_request("artifact_id must be a valid UUID"))?;
+            let platform = normalize_required("platform", payload.platform)?;
+            let object_key = normalize_required("object_key", payload.object_key)?;
+            let checksum = normalize_checksum(&payload.checksum)?;
+            let size = validate_artifact_size(payload.size)?;
 
-    let expected_prefix =
-        artifact_object_key_prefix(&release, &platform, &artifact_uuid.to_string())?;
-    if !object_key.starts_with(&expected_prefix) {
-        return Err(ApiError::bad_request(
-            "object_key does not match release or platform",
-        ));
-    }
+            let expected_prefix =
+                artifact_object_key_prefix(&release, &platform, &artifact_uuid.to_string())?;
+            if !object_key.starts_with(&expected_prefix) {
+                return Err(ApiError::bad_request(
+                    "object_key does not match release or platform",
+                ));
+            }
 
-    let record = ArtifactRecord {
-        id: artifact_uuid.to_string(),
-        release_id: release.id,
-        object_key,
-        checksum,
-        size,
-        platform,
-        created_at: now_ts_or_internal()?,
-    };
+            let record = ArtifactRecord {
+                id: artifact_uuid.to_string(),
+                release_id: release.id,
+                object_key,
+                checksum,
+                size,
+                platform,
+                created_at: now_ts_or_internal()?,
+            };
 
-    state.db.insert_artifact(&record).await.map_err(|err| {
-        if let sqlx::Error::Database(db_err) = &err
-            && db_err.is_unique_violation()
-        {
-            return ApiError::new(StatusCode::CONFLICT, "artifact already exists");
-        }
-        error!("failed to register artifact: {err}");
-        ApiError::internal("failed to register artifact")
-    })?;
+            state.db.insert_artifact(&record).await.map_err(|err| {
+                if let sqlx::Error::Database(db_err) = &err
+                    && db_err.is_unique_violation()
+                {
+                    return ApiError::new(StatusCode::CONFLICT, "artifact already exists");
+                }
+                error!("failed to register artifact: {err}");
+                ApiError::internal("failed to register artifact")
+            })?;
 
-    Ok(Json(ArtifactRegisterResponse::from_record(record)))
+            Ok(ArtifactRegisterResponse::from_record(record))
+        },
+    )
+    .await?;
+
+    Ok(Json(response))
 }
 
 pub async fn create_download_token(
@@ -724,7 +816,7 @@ pub async fn create_download_token(
     let auth = authenticate_api_key(&headers, &state.settings, &state.db).await?;
     require_scopes(&auth, &["downloads:token"])?;
 
-    let artifact_id = normalize_required("artifact_id", payload.artifact_id)?;
+    let artifact_id = normalize_required("artifact_id", payload.artifact_id.clone())?;
     let artifact_uuid = Uuid::parse_str(&artifact_id)
         .map_err(|_| ApiError::bad_request("artifact_id must be a valid UUID"))?;
 
@@ -756,7 +848,7 @@ pub async fn create_download_token(
 
     let entitlements = state
         .db
-        .list_entitlements_by_customer(&auth.customer_id)
+        .list_entitlements_by_customer(&auth.customer_id, Some(&release.product), None, None)
         .await
         .map_err(|err| {
             error!("failed to list entitlements: {err}");
@@ -768,43 +860,56 @@ pub async fn create_download_token(
         return Err(ApiError::forbidden("entitlement required"));
     }
 
-    let ttl = resolve_requested_ttl(
-        payload.expires_in_seconds,
-        state.settings.download_token_ttl_seconds,
-        "expires_in_seconds",
-    )?;
-    let token = generate_download_token()?;
-    let token_hash = hash_download_token(&token, state.settings.api_key_pepper.as_deref());
-    let expires_at = now + i64::from(ttl);
-    let purpose = payload
-        .purpose
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+    let payload_for_idempotency = payload.clone();
+    let response = with_idempotency(
+        &state,
+        &headers,
+        "create_download_token",
+        &auth.customer_id,
+        &payload_for_idempotency,
+        || async {
+            let ttl = resolve_requested_ttl(
+                payload.expires_in_seconds,
+                state.settings.download_token_ttl_seconds,
+                "expires_in_seconds",
+            )?;
+            let token = generate_download_token()?;
+            let token_hash = hash_download_token(&token, state.settings.api_key_pepper.as_deref());
+            let expires_at = now + i64::from(ttl);
+            let purpose = payload
+                .purpose
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
 
-    let record = DownloadTokenRecord {
-        token_hash,
-        artifact_id: artifact.id,
-        customer_id: auth.customer_id,
-        purpose,
-        expires_at,
-        created_at: now,
-    };
+            let record = DownloadTokenRecord {
+                token_hash,
+                artifact_id: artifact.id,
+                customer_id: auth.customer_id.clone(),
+                purpose,
+                expires_at,
+                created_at: now,
+            };
 
-    state
-        .db
-        .insert_download_token(&record)
-        .await
-        .map_err(|err| {
-            error!("failed to create download token: {err}");
-            ApiError::internal("failed to create download token")
-        })?;
+            state
+                .db
+                .insert_download_token(&record)
+                .await
+                .map_err(|err| {
+                    error!("failed to create download token: {err}");
+                    ApiError::internal("failed to create download token")
+                })?;
 
-    let download_url = build_download_url(&headers, &token)?;
+            let download_url = build_download_url(&headers, &token)?;
 
-    Ok(Json(DownloadTokenResponse {
-        download_url,
-        expires_at,
-    }))
+            Ok(DownloadTokenResponse {
+                download_url,
+                expires_at,
+            })
+        },
+    )
+    .await?;
+
+    Ok(Json(response))
 }
 
 pub async fn resolve_download_token(
@@ -873,7 +978,7 @@ pub async fn resolve_download_token(
 
     let entitlements = state
         .db
-        .list_entitlements_by_customer(&record.customer_id)
+        .list_entitlements_by_customer(&record.customer_id, Some(&release.product), None, None)
         .await
         .map_err(|err| {
             error!("failed to list entitlements: {err}");
@@ -1009,7 +1114,7 @@ async fn list_releases_for_customer(
 
     let entitlements = state
         .db
-        .list_entitlements_by_customer(&auth.customer_id)
+        .list_entitlements_by_customer(&auth.customer_id, None, None, None)
         .await
         .map_err(|err| {
             error!("failed to list entitlements: {err}");
@@ -1311,6 +1416,238 @@ fn resolve_pagination(limit: Option<u32>, offset: Option<u32>) -> Result<(i64, i
 
     let offset = offset.unwrap_or(0);
     Ok((limit as i64, offset as i64))
+}
+
+const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
+const IDEMPOTENCY_TTL_SECONDS: i64 = 86_400;
+const IDEMPOTENCY_STATE_IN_PROGRESS: &str = "in_progress";
+const IDEMPOTENCY_STATE_COMPLETED: &str = "completed";
+
+struct IdempotencyContext {
+    key: String,
+    endpoint: &'static str,
+    request_hash: String,
+    created_at: i64,
+    expires_at: i64,
+}
+
+struct IdempotencyStart<R> {
+    existing: Option<R>,
+    context: Option<IdempotencyContext>,
+}
+
+async fn idempotency_start<P, R>(
+    state: &AppState,
+    headers: &HeaderMap,
+    endpoint: &'static str,
+    extra: &str,
+    payload: &P,
+) -> Result<IdempotencyStart<R>, ApiError>
+where
+    P: Serialize,
+    R: DeserializeOwned,
+{
+    let key = match extract_idempotency_key(headers)? {
+        Some(key) => key,
+        None => {
+            return Ok(IdempotencyStart {
+                existing: None,
+                context: None,
+            });
+        }
+    };
+    let request_hash = hash_idempotency_payload(extra, payload)?;
+    let now = now_ts_or_internal()?;
+
+    loop {
+        let record = crate::models::IdempotencyRecord {
+            key: key.clone(),
+            endpoint: endpoint.to_string(),
+            request_hash: request_hash.clone(),
+            response_status: None,
+            response_body: None,
+            state: IDEMPOTENCY_STATE_IN_PROGRESS.to_string(),
+            created_at: now,
+            expires_at: now + IDEMPOTENCY_TTL_SECONDS,
+        };
+        let inserted = state
+            .db
+            .insert_idempotency_key(&record)
+            .await
+            .map_err(|err| {
+                error!("failed to reserve idempotency key: {err}");
+                ApiError::internal("failed to reserve idempotency key")
+            })?;
+        if inserted > 0 {
+            return Ok(IdempotencyStart {
+                existing: None,
+                context: Some(IdempotencyContext {
+                    key,
+                    endpoint,
+                    request_hash,
+                    created_at: record.created_at,
+                    expires_at: record.expires_at,
+                }),
+            });
+        }
+
+        let existing = state
+            .db
+            .get_idempotency_key(&key, endpoint)
+            .await
+            .map_err(|err| {
+                error!("failed to lookup idempotency key: {err}");
+                ApiError::internal("failed to lookup idempotency key")
+            })?;
+        let Some(existing) = existing else {
+            continue;
+        };
+
+        if existing.expires_at <= now {
+            let _ = state.db.delete_idempotency_key(&key, endpoint).await;
+            continue;
+        }
+
+        if existing.request_hash != request_hash {
+            return Err(ApiError::new_with_code(
+                StatusCode::CONFLICT,
+                "idempotency_conflict",
+                "idempotency key already used",
+            ));
+        }
+
+        if existing.state != IDEMPOTENCY_STATE_COMPLETED {
+            return Err(ApiError::new_with_code(
+                StatusCode::CONFLICT,
+                "idempotency_in_progress",
+                "idempotency key already in progress",
+            ));
+        }
+
+        let body = existing
+            .response_body
+            .ok_or_else(|| ApiError::internal("idempotency response missing"))?;
+        let response = serde_json::from_str(&body).map_err(|err| {
+            error!("failed to decode idempotency response: {err}");
+            ApiError::internal("failed to decode idempotency response")
+        })?;
+        return Ok(IdempotencyStart {
+            existing: Some(response),
+            context: None,
+        });
+    }
+}
+
+async fn idempotency_finish<R>(
+    state: &AppState,
+    context: IdempotencyContext,
+    response: &R,
+) -> Result<(), ApiError>
+where
+    R: Serialize,
+{
+    let body = serde_json::to_string(response).map_err(|err| {
+        error!("failed to encode idempotency response: {err}");
+        ApiError::internal("failed to encode idempotency response")
+    })?;
+    let record = crate::models::IdempotencyRecord {
+        key: context.key,
+        endpoint: context.endpoint.to_string(),
+        request_hash: context.request_hash,
+        response_status: Some(i32::from(StatusCode::OK.as_u16())),
+        response_body: Some(body),
+        state: IDEMPOTENCY_STATE_COMPLETED.to_string(),
+        created_at: context.created_at,
+        expires_at: context.expires_at,
+    };
+
+    state
+        .db
+        .update_idempotency_key(&record)
+        .await
+        .map_err(|err| {
+            error!("failed to store idempotency response: {err}");
+            ApiError::internal("failed to store idempotency response")
+        })?;
+    Ok(())
+}
+
+async fn idempotency_abort(state: &AppState, context: IdempotencyContext) {
+    let _ = state
+        .db
+        .delete_idempotency_key(&context.key, context.endpoint)
+        .await;
+}
+
+fn extract_idempotency_key(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    let value = match headers.get(IDEMPOTENCY_KEY_HEADER) {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| ApiError::bad_request("idempotency-key must be valid ASCII"))?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::bad_request("idempotency-key must not be empty"));
+    }
+    if trimmed.len() > 128 {
+        return Err(ApiError::bad_request("idempotency-key is too long"));
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+fn hash_idempotency_payload<P>(extra: &str, payload: &P) -> Result<String, ApiError>
+where
+    P: Serialize,
+{
+    let payload_json = serde_json::to_string(payload).map_err(|err| {
+        error!("failed to encode idempotency payload: {err}");
+        ApiError::internal("failed to encode idempotency payload")
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(extra.as_bytes());
+    hasher.update(b":");
+    hasher.update(payload_json.as_bytes());
+    Ok(hex_encode(hasher.finalize()))
+}
+
+async fn with_idempotency<P, R, F, Fut>(
+    state: &AppState,
+    headers: &HeaderMap,
+    endpoint: &'static str,
+    extra: &str,
+    payload: &P,
+    handler: F,
+) -> Result<R, ApiError>
+where
+    P: Serialize,
+    R: Serialize + DeserializeOwned,
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<R, ApiError>>,
+{
+    let start = idempotency_start::<P, R>(state, headers, endpoint, extra, payload).await?;
+    if let Some(existing) = start.existing {
+        return Ok(existing);
+    }
+
+    let result = handler().await;
+    match result {
+        Ok(response) => {
+            if let Some(context) = start.context
+                && let Err(err) = idempotency_finish(state, context, &response).await
+            {
+                error!("idempotency finish failed: {err:?}");
+            }
+            Ok(response)
+        }
+        Err(err) => {
+            if let Some(context) = start.context {
+                idempotency_abort(state, context).await;
+            }
+            Err(err)
+        }
+    }
 }
 
 fn normalize_key_type(value: Option<String>) -> Result<String, ApiError> {
@@ -1748,6 +2085,53 @@ mod tests {
         let err = create_release(State(state), headers, Json(second))
             .await
             .expect_err("duplicate release");
+        assert_eq!(err.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn create_release_is_idempotent() {
+        let state = setup_state().await;
+        let mut headers = admin_headers();
+        headers.insert(IDEMPOTENCY_KEY_HEADER, "release-idem-1".parse().unwrap());
+
+        let request = ReleaseCreateRequest {
+            product: "releasy".to_string(),
+            version: "9.9.9".to_string(),
+        };
+
+        let Json(first) =
+            create_release(State(state.clone()), headers.clone(), Json(request.clone()))
+                .await
+                .expect("first release");
+
+        let Json(second) = create_release(State(state), headers, Json(request))
+            .await
+            .expect("second release");
+
+        assert_eq!(first.id, second.id);
+    }
+
+    #[tokio::test]
+    async fn create_release_rejects_idempotency_conflict() {
+        let state = setup_state().await;
+        let mut headers = admin_headers();
+        headers.insert(IDEMPOTENCY_KEY_HEADER, "release-idem-2".parse().unwrap());
+
+        let first = ReleaseCreateRequest {
+            product: "releasy".to_string(),
+            version: "10.0.0".to_string(),
+        };
+        let _ = create_release(State(state.clone()), headers.clone(), Json(first))
+            .await
+            .expect("first release");
+
+        let second = ReleaseCreateRequest {
+            product: "releasy".to_string(),
+            version: "10.0.1".to_string(),
+        };
+        let err = create_release(State(state), headers, Json(second))
+            .await
+            .expect_err("idempotency conflict");
         assert_eq!(err.status(), StatusCode::CONFLICT);
     }
 
@@ -2200,10 +2584,19 @@ mod tests {
         assert_eq!(response.product, "releasy");
         assert_eq!(response.metadata, Some(json!({"tier": "pro"})));
 
-        let Json(list_response) =
-            list_entitlements(State(state), admin_headers(), Path(customer.id))
-                .await
-                .expect("list entitlements");
+        let query = EntitlementListQuery {
+            product: None,
+            limit: None,
+            offset: None,
+        };
+        let Json(list_response) = list_entitlements(
+            State(state),
+            admin_headers(),
+            Path(customer.id),
+            Query(query),
+        )
+        .await
+        .expect("list entitlements");
         assert_eq!(list_response.entitlements.len(), 1);
         assert_eq!(list_response.entitlements[0].product, "releasy");
     }

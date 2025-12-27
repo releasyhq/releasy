@@ -45,6 +45,10 @@ Request a presigned PUT URL:
 POST /v1/releases/{release_id}/artifacts/presign
 ```
 
+Notes:
+
+- Supports `Idempotency-Key` (see `docs/api-conventions.md`).
+
 Request body:
 
 ```json
@@ -82,6 +86,10 @@ After uploading, register the artifact with its metadata:
 ```
 POST /v1/releases/{release_id}/artifacts
 ```
+
+Notes:
+
+- Supports `Idempotency-Key` (see `docs/api-conventions.md`).
 
 Request body:
 

@@ -81,6 +81,7 @@ Notes:
 
 - Returns `409 Conflict` with `"release already exists"` if a release with
   the same product and version already exists.
+- Supports `Idempotency-Key` (see `docs/api-conventions.md`).
 
 ### List releases
 

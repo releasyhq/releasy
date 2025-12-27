@@ -5,7 +5,7 @@ use crate::{
     config::Settings,
     models::{
         ApiKeyAuthRecord, ApiKeyRecord, ArtifactRecord, Customer, DownloadTokenRecord,
-        EntitlementRecord, ReleaseRecord,
+        EntitlementRecord, IdempotencyRecord, ReleaseRecord,
     },
 };
 
@@ -196,14 +196,19 @@ impl Database {
     pub async fn list_entitlements_by_customer(
         &self,
         customer_id: &str,
+        product: Option<&str>,
+        limit: Option<i64>,
+        offset: Option<i64>,
     ) -> Result<Vec<EntitlementRecord>, sqlx::Error> {
         match self {
             Database::Postgres(pool) => {
-                let rows = sqlx::query(
-                    "SELECT id, customer_id, product, starts_at, ends_at, metadata \
-                     FROM entitlements WHERE customer_id = $1 ORDER BY starts_at ASC",
+                let rows = Self::build_list_entitlements_query::<sqlx::Postgres>(
+                    customer_id,
+                    product,
+                    limit,
+                    offset,
                 )
-                .bind(customer_id)
+                .build()
                 .fetch_all(pool)
                 .await?;
                 rows.into_iter()
@@ -220,11 +225,13 @@ impl Database {
                     .collect()
             }
             Database::Sqlite(pool) => {
-                let rows = sqlx::query(
-                    "SELECT id, customer_id, product, starts_at, ends_at, metadata \
-                     FROM entitlements WHERE customer_id = ? ORDER BY starts_at ASC",
+                let rows = Self::build_list_entitlements_query::<sqlx::Sqlite>(
+                    customer_id,
+                    product,
+                    limit,
+                    offset,
                 )
-                .bind(customer_id)
+                .build()
                 .fetch_all(pool)
                 .await?;
                 rows.into_iter()
@@ -241,6 +248,40 @@ impl Database {
                     .collect()
             }
         }
+    }
+
+    fn build_list_entitlements_query<'args, DB>(
+        customer_id: &'args str,
+        product: Option<&'args str>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> sqlx::QueryBuilder<'args, DB>
+    where
+        DB: sqlx::Database,
+        &'args str: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+        i64: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+    {
+        let mut builder = sqlx::QueryBuilder::<DB>::new(
+            "SELECT id, customer_id, product, starts_at, ends_at, metadata \
+             FROM entitlements WHERE customer_id = ",
+        );
+        builder.push_bind(customer_id);
+
+        if let Some(product) = product {
+            builder.push(" AND product = ").push_bind(product);
+        }
+
+        builder.push(" ORDER BY starts_at ASC");
+
+        if let Some(limit) = limit {
+            builder
+                .push(" LIMIT ")
+                .push_bind(limit)
+                .push(" OFFSET ")
+                .push_bind(offset.unwrap_or(0));
+        }
+
+        builder
     }
 
     pub async fn get_entitlement(
@@ -797,6 +838,171 @@ impl Database {
                     expires_at: row.get("expires_at"),
                     created_at: row.get("created_at"),
                 }))
+            }
+        }
+    }
+
+    pub async fn get_idempotency_key(
+        &self,
+        key: &str,
+        endpoint: &str,
+    ) -> Result<Option<IdempotencyRecord>, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let row = sqlx::query(
+                    "SELECT idempotency_key, endpoint, request_hash, response_status, response_body, \
+                     state, created_at, expires_at FROM idempotency_keys \
+                     WHERE idempotency_key = $1 AND endpoint = $2",
+                )
+                .bind(key)
+                .bind(endpoint)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| IdempotencyRecord {
+                    key: row.get("idempotency_key"),
+                    endpoint: row.get("endpoint"),
+                    request_hash: row.get("request_hash"),
+                    response_status: row.get("response_status"),
+                    response_body: row.get("response_body"),
+                    state: row.get("state"),
+                    created_at: row.get("created_at"),
+                    expires_at: row.get("expires_at"),
+                }))
+            }
+            Database::Sqlite(pool) => {
+                let row = sqlx::query(
+                    "SELECT idempotency_key, endpoint, request_hash, response_status, response_body, \
+                     state, created_at, expires_at FROM idempotency_keys \
+                     WHERE idempotency_key = ? AND endpoint = ?",
+                )
+                .bind(key)
+                .bind(endpoint)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| IdempotencyRecord {
+                    key: row.get("idempotency_key"),
+                    endpoint: row.get("endpoint"),
+                    request_hash: row.get("request_hash"),
+                    response_status: row.get("response_status"),
+                    response_body: row.get("response_body"),
+                    state: row.get("state"),
+                    created_at: row.get("created_at"),
+                    expires_at: row.get("expires_at"),
+                }))
+            }
+        }
+    }
+
+    pub async fn insert_idempotency_key(
+        &self,
+        record: &IdempotencyRecord,
+    ) -> Result<u64, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let result = sqlx::query(
+                    "INSERT INTO idempotency_keys \
+                     (idempotency_key, endpoint, request_hash, response_status, response_body, \
+                      state, created_at, expires_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+                     ON CONFLICT (idempotency_key, endpoint) DO NOTHING",
+                )
+                .bind(&record.key)
+                .bind(&record.endpoint)
+                .bind(&record.request_hash)
+                .bind(record.response_status)
+                .bind(&record.response_body)
+                .bind(&record.state)
+                .bind(record.created_at)
+                .bind(record.expires_at)
+                .execute(pool)
+                .await?;
+                Ok(result.rows_affected())
+            }
+            Database::Sqlite(pool) => {
+                let result = sqlx::query(
+                    "INSERT OR IGNORE INTO idempotency_keys \
+                     (idempotency_key, endpoint, request_hash, response_status, response_body, \
+                      state, created_at, expires_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&record.key)
+                .bind(&record.endpoint)
+                .bind(&record.request_hash)
+                .bind(record.response_status)
+                .bind(&record.response_body)
+                .bind(&record.state)
+                .bind(record.created_at)
+                .bind(record.expires_at)
+                .execute(pool)
+                .await?;
+                Ok(result.rows_affected())
+            }
+        }
+    }
+
+    pub async fn update_idempotency_key(
+        &self,
+        record: &IdempotencyRecord,
+    ) -> Result<u64, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let result = sqlx::query(
+                    "UPDATE idempotency_keys SET response_status = $1, response_body = $2, \
+                     state = $3, expires_at = $4 WHERE idempotency_key = $5 AND endpoint = $6",
+                )
+                .bind(record.response_status)
+                .bind(&record.response_body)
+                .bind(&record.state)
+                .bind(record.expires_at)
+                .bind(&record.key)
+                .bind(&record.endpoint)
+                .execute(pool)
+                .await?;
+                Ok(result.rows_affected())
+            }
+            Database::Sqlite(pool) => {
+                let result = sqlx::query(
+                    "UPDATE idempotency_keys SET response_status = ?, response_body = ?, \
+                     state = ?, expires_at = ? WHERE idempotency_key = ? AND endpoint = ?",
+                )
+                .bind(record.response_status)
+                .bind(&record.response_body)
+                .bind(&record.state)
+                .bind(record.expires_at)
+                .bind(&record.key)
+                .bind(&record.endpoint)
+                .execute(pool)
+                .await?;
+                Ok(result.rows_affected())
+            }
+        }
+    }
+
+    pub async fn delete_idempotency_key(
+        &self,
+        key: &str,
+        endpoint: &str,
+    ) -> Result<u64, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let result = sqlx::query(
+                    "DELETE FROM idempotency_keys WHERE idempotency_key = $1 AND endpoint = $2",
+                )
+                .bind(key)
+                .bind(endpoint)
+                .execute(pool)
+                .await?;
+                Ok(result.rows_affected())
+            }
+            Database::Sqlite(pool) => {
+                let result = sqlx::query(
+                    "DELETE FROM idempotency_keys WHERE idempotency_key = ? AND endpoint = ?",
+                )
+                .bind(key)
+                .bind(endpoint)
+                .execute(pool)
+                .await?;
+                Ok(result.rows_affected())
             }
         }
     }

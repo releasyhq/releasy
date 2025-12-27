@@ -21,6 +21,10 @@ This key is required for admin endpoints and is not meant for customer use.
 
 Requires: `platform_admin` role
 
+Notes:
+
+- Supports `Idempotency-Key` (see `docs/api-conventions.md`).
+
 Request body:
 
 | Field  | Type   | Required | Description                                  |
@@ -53,6 +57,10 @@ Response body:
 `POST /v1/admin/keys`
 
 Requires: `platform_admin` role
+
+Notes:
+
+- `Idempotency-Key` is not supported because API keys are only returned once.
 
 Request body:
 
