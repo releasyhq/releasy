@@ -218,7 +218,6 @@ pub fn require_support_or_admin(role: AdminRole) -> Result<(), ApiError> {
     }
 }
 
-#[allow(dead_code)]
 pub fn require_release_publisher(role: AdminRole) -> Result<(), ApiError> {
     match role {
         AdminRole::PlatformAdmin | AdminRole::ReleasePublisher => Ok(()),

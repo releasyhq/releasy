@@ -45,6 +45,16 @@ pub struct ApiKeyIntrospection {
     pub expires_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseRecord {
+    pub id: String,
+    pub product: String,
+    pub version: String,
+    pub status: String,
+    pub created_at: i64,
+    pub published_at: Option<i64>,
+}
+
 pub const DEFAULT_API_KEY_TYPE: &str = "human";
 
 pub const DEFAULT_SCOPES: &[&str] = &[

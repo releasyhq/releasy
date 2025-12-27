@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     config::Settings,
-    models::{ApiKeyAuthRecord, ApiKeyRecord, Customer},
+    models::{ApiKeyAuthRecord, ApiKeyRecord, Customer, ReleaseRecord},
     utils::now_ts,
 };
 
@@ -211,6 +211,369 @@ impl Database {
                 Ok(result.rows_affected())
             }
         }
+    }
+
+    pub async fn insert_release(&self, release: &ReleaseRecord) -> Result<(), sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                sqlx::query(
+                    "INSERT INTO releases (id, product, version, status, created_at, published_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6)",
+                )
+                .bind(&release.id)
+                .bind(&release.product)
+                .bind(&release.version)
+                .bind(&release.status)
+                .bind(release.created_at)
+                .bind(release.published_at)
+                .execute(pool)
+                .await?;
+            }
+            Database::Sqlite(pool) => {
+                sqlx::query(
+                    "INSERT INTO releases (id, product, version, status, created_at, published_at) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&release.id)
+                .bind(&release.product)
+                .bind(&release.version)
+                .bind(&release.status)
+                .bind(release.created_at)
+                .bind(release.published_at)
+                .execute(pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn get_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Option<ReleaseRecord>, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let row = sqlx::query(
+                    "SELECT id, product, version, status, created_at, published_at \
+                     FROM releases WHERE id = $1",
+                )
+                .bind(release_id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| ReleaseRecord {
+                    id: row.get("id"),
+                    product: row.get("product"),
+                    version: row.get("version"),
+                    status: row.get("status"),
+                    created_at: row.get("created_at"),
+                    published_at: row.get("published_at"),
+                }))
+            }
+            Database::Sqlite(pool) => {
+                let row = sqlx::query(
+                    "SELECT id, product, version, status, created_at, published_at \
+                     FROM releases WHERE id = ?",
+                )
+                .bind(release_id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| ReleaseRecord {
+                    id: row.get("id"),
+                    product: row.get("product"),
+                    version: row.get("version"),
+                    status: row.get("status"),
+                    created_at: row.get("created_at"),
+                    published_at: row.get("published_at"),
+                }))
+            }
+        }
+    }
+
+    pub async fn list_releases(
+        &self,
+        product: Option<&str>,
+        status: Option<&str>,
+        version: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<ReleaseRecord>, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let rows = match (product, status, version) {
+                    (Some(product), Some(status), Some(version)) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE product = $1 AND status = $2 AND version = $3 \
+                             ORDER BY created_at DESC LIMIT $4 OFFSET $5",
+                        )
+                        .bind(product)
+                        .bind(status)
+                        .bind(version)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (Some(product), Some(status), None) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE product = $1 AND status = $2 \
+                             ORDER BY created_at DESC LIMIT $3 OFFSET $4",
+                        )
+                        .bind(product)
+                        .bind(status)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (Some(product), None, Some(version)) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE product = $1 AND version = $2 \
+                             ORDER BY created_at DESC LIMIT $3 OFFSET $4",
+                        )
+                        .bind(product)
+                        .bind(version)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (Some(product), None, None) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE product = $1 ORDER BY created_at DESC \
+                             LIMIT $2 OFFSET $3",
+                        )
+                        .bind(product)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (None, Some(status), Some(version)) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE status = $1 AND version = $2 \
+                             ORDER BY created_at DESC LIMIT $3 OFFSET $4",
+                        )
+                        .bind(status)
+                        .bind(version)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (None, Some(status), None) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE status = $1 ORDER BY created_at DESC \
+                             LIMIT $2 OFFSET $3",
+                        )
+                        .bind(status)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (None, None, Some(version)) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE version = $1 ORDER BY created_at DESC \
+                             LIMIT $2 OFFSET $3",
+                        )
+                        .bind(version)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (None, None, None) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+                        )
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                };
+                rows.into_iter()
+                    .map(|row| {
+                        Ok(ReleaseRecord {
+                            id: row.try_get("id")?,
+                            product: row.try_get("product")?,
+                            version: row.try_get("version")?,
+                            status: row.try_get("status")?,
+                            created_at: row.try_get("created_at")?,
+                            published_at: row.try_get("published_at")?,
+                        })
+                    })
+                    .collect()
+            }
+            Database::Sqlite(pool) => {
+                let rows = match (product, status, version) {
+                    (Some(product), Some(status), Some(version)) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE product = ? AND status = ? AND version = ? \
+                             ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                        )
+                        .bind(product)
+                        .bind(status)
+                        .bind(version)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (Some(product), Some(status), None) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE product = ? AND status = ? \
+                             ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                        )
+                        .bind(product)
+                        .bind(status)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (Some(product), None, Some(version)) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE product = ? AND version = ? \
+                             ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                        )
+                        .bind(product)
+                        .bind(version)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (Some(product), None, None) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE product = ? ORDER BY created_at DESC \
+                             LIMIT ? OFFSET ?",
+                        )
+                        .bind(product)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (None, Some(status), Some(version)) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE status = ? AND version = ? \
+                             ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                        )
+                        .bind(status)
+                        .bind(version)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (None, Some(status), None) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE status = ? ORDER BY created_at DESC \
+                             LIMIT ? OFFSET ?",
+                        )
+                        .bind(status)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (None, None, Some(version)) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases WHERE version = ? ORDER BY created_at DESC \
+                             LIMIT ? OFFSET ?",
+                        )
+                        .bind(version)
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                    (None, None, None) => {
+                        sqlx::query(
+                            "SELECT id, product, version, status, created_at, published_at \
+                             FROM releases ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                        )
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch_all(pool)
+                        .await?
+                    }
+                };
+                rows.into_iter()
+                    .map(|row| {
+                        Ok(ReleaseRecord {
+                            id: row.try_get("id")?,
+                            product: row.try_get("product")?,
+                            version: row.try_get("version")?,
+                            status: row.try_get("status")?,
+                            created_at: row.try_get("created_at")?,
+                            published_at: row.try_get("published_at")?,
+                        })
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    pub async fn update_release_status(
+        &self,
+        release_id: &str,
+        status: &str,
+        published_at: Option<i64>,
+    ) -> Result<u64, sqlx::Error> {
+        let rows = match self {
+            Database::Postgres(pool) => {
+                sqlx::query("UPDATE releases SET status = $1, published_at = $2 WHERE id = $3")
+                    .bind(status)
+                    .bind(published_at)
+                    .bind(release_id)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+            Database::Sqlite(pool) => {
+                sqlx::query("UPDATE releases SET status = ?, published_at = ? WHERE id = ?")
+                    .bind(status)
+                    .bind(published_at)
+                    .bind(release_id)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+        };
+        Ok(rows)
+    }
+
+    pub async fn delete_release(&self, release_id: &str) -> Result<u64, sqlx::Error> {
+        let rows = match self {
+            Database::Postgres(pool) => sqlx::query("DELETE FROM releases WHERE id = $1")
+                .bind(release_id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
+            Database::Sqlite(pool) => sqlx::query("DELETE FROM releases WHERE id = ?")
+                .bind(release_id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
+        };
+        Ok(rows)
     }
 
     pub async fn insert_audit_event(

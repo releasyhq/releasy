@@ -1,19 +1,21 @@
-use axum::extract::{Json, State};
-use axum::http::HeaderMap;
+use axum::extract::{Json, Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
 use tracing::error;
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::auth::{
-    admin_authorize_with_role, api_key_prefix, authenticate_api_key, generate_api_key,
-    hash_api_key, require_admin, require_scopes, require_support_or_admin,
+    AdminRole, admin_authorize_with_role, api_key_prefix, authenticate_api_key, generate_api_key,
+    hash_api_key, require_admin, require_release_publisher, require_scopes,
+    require_support_or_admin,
 };
 use crate::errors::ApiError;
 use crate::models::{
-    ApiKeyIntrospection, ApiKeyRecord, Customer, DEFAULT_API_KEY_TYPE, default_scopes,
-    normalize_scopes, scopes_to_json,
+    ApiKeyIntrospection, ApiKeyRecord, Customer, DEFAULT_API_KEY_TYPE, ReleaseRecord,
+    default_scopes, normalize_scopes, scopes_to_json,
 };
+use crate::release::{ReleaseAction, ReleaseStatus, ReleaseTransitionError, apply_release_action};
 use crate::utils::now_ts;
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +59,51 @@ pub(crate) struct AdminRevokeKeyRequest {
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminRevokeKeyResponse {
     api_key_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ReleaseCreateRequest {
+    product: String,
+    version: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ReleaseListQuery {
+    product: Option<String>,
+    status: Option<String>,
+    version: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ReleaseResponse {
+    id: String,
+    product: String,
+    version: String,
+    status: String,
+    created_at: i64,
+    published_at: Option<i64>,
+}
+
+impl ReleaseResponse {
+    fn from_record(record: ReleaseRecord) -> Self {
+        Self {
+            id: record.id,
+            product: record.product,
+            version: record.version,
+            status: record.status,
+            created_at: record.created_at,
+            published_at: record.published_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ReleaseListResponse {
+    releases: Vec<ReleaseResponse>,
+    limit: i64,
+    offset: i64,
 }
 
 pub async fn admin_create_customer(
@@ -200,6 +247,115 @@ pub async fn admin_revoke_key(
     }))
 }
 
+pub async fn create_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<ReleaseCreateRequest>,
+) -> Result<Json<ReleaseResponse>, ApiError> {
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_release_publisher(role)?;
+
+    let product = normalize_required("product", payload.product)?;
+    let version = normalize_required("version", payload.version)?;
+
+    let record = ReleaseRecord {
+        id: Uuid::new_v4().to_string(),
+        product,
+        version,
+        status: ReleaseStatus::Draft.as_str().to_string(),
+        created_at: now_ts(),
+        published_at: None,
+    };
+
+    state.db.insert_release(&record).await.map_err(|err| {
+        error!("failed to create release: {err}");
+        ApiError::internal("failed to create release")
+    })?;
+
+    Ok(Json(ReleaseResponse::from_record(record)))
+}
+
+pub async fn list_releases(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ReleaseListQuery>,
+) -> Result<Json<ReleaseListResponse>, ApiError> {
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_release_list_role(role)?;
+
+    let product = normalize_optional("product", query.product)?;
+    let version = normalize_optional("version", query.version)?;
+    let status = match normalize_optional("status", query.status)? {
+        Some(status) => {
+            let parsed = ReleaseStatus::parse(&status)
+                .ok_or_else(|| ApiError::bad_request("invalid status"))?;
+            Some(parsed.as_str().to_string())
+        }
+        None => None,
+    };
+
+    let (limit, offset) = resolve_pagination(query.limit, query.offset)?;
+    let releases = state
+        .db
+        .list_releases(
+            product.as_deref(),
+            status.as_deref(),
+            version.as_deref(),
+            limit,
+            offset,
+        )
+        .await
+        .map_err(|err| {
+            error!("failed to list releases: {err}");
+            ApiError::internal("failed to list releases")
+        })?;
+
+    let responses = releases
+        .into_iter()
+        .map(ReleaseResponse::from_record)
+        .collect();
+    Ok(Json(ReleaseListResponse {
+        releases: responses,
+        limit,
+        offset,
+    }))
+}
+
+pub async fn publish_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(release_id): Path<String>,
+) -> Result<Json<ReleaseResponse>, ApiError> {
+    apply_release_action_with_rbac(&state, &headers, &release_id, ReleaseAction::Publish).await
+}
+
+pub async fn unpublish_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(release_id): Path<String>,
+) -> Result<Json<ReleaseResponse>, ApiError> {
+    apply_release_action_with_rbac(&state, &headers, &release_id, ReleaseAction::Unpublish).await
+}
+
+pub async fn delete_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(release_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_admin(role)?;
+
+    let rows = state.db.delete_release(&release_id).await.map_err(|err| {
+        error!("failed to delete release: {err}");
+        ApiError::internal("failed to delete release")
+    })?;
+    if rows == 0 {
+        return Err(ApiError::not_found("release not found"));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn auth_introspect(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -215,4 +371,107 @@ pub async fn auth_introspect(
         scopes: auth.scopes,
         expires_at: auth.expires_at,
     }))
+}
+
+fn normalize_required(field: &str, value: String) -> Result<String, ApiError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::bad_request(format!("{field} is required")));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn normalize_optional(field: &str, value: Option<String>) -> Result<Option<String>, ApiError> {
+    match value {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                Err(ApiError::bad_request(format!("{field} must not be empty")))
+            } else {
+                Ok(Some(trimmed.to_string()))
+            }
+        }
+        None => Ok(None),
+    }
+}
+
+fn resolve_pagination(limit: Option<u32>, offset: Option<u32>) -> Result<(i64, i64), ApiError> {
+    const DEFAULT_LIMIT: u32 = 50;
+    const MAX_LIMIT: u32 = 200;
+
+    let limit = limit.unwrap_or(DEFAULT_LIMIT);
+    if limit == 0 {
+        return Err(ApiError::bad_request("limit must be positive"));
+    }
+    if limit > MAX_LIMIT {
+        return Err(ApiError::bad_request(format!(
+            "limit must be <= {MAX_LIMIT}"
+        )));
+    }
+
+    let offset = offset.unwrap_or(0);
+    Ok((limit as i64, offset as i64))
+}
+
+fn require_release_list_role(role: AdminRole) -> Result<(), ApiError> {
+    match role {
+        AdminRole::PlatformAdmin | AdminRole::PlatformSupport | AdminRole::ReleasePublisher => {
+            Ok(())
+        }
+    }
+}
+
+async fn apply_release_action_with_rbac(
+    state: &AppState,
+    headers: &HeaderMap,
+    release_id: &str,
+    action: ReleaseAction,
+) -> Result<Json<ReleaseResponse>, ApiError> {
+    let role = admin_authorize_with_role(headers, &state.settings, &state.jwks_cache).await?;
+    match action {
+        ReleaseAction::Publish => require_release_publisher(role)?,
+        ReleaseAction::Unpublish => require_admin(role)?,
+    }
+
+    let mut release = state
+        .db
+        .get_release(release_id)
+        .await
+        .map_err(|err| {
+            error!("failed to get release: {err}");
+            ApiError::internal("failed to get release")
+        })?
+        .ok_or_else(|| ApiError::not_found("release not found"))?;
+
+    let current = ReleaseStatus::parse(&release.status)
+        .ok_or_else(|| ApiError::internal("invalid status"))?;
+    let next = apply_release_action(current, action).map_err(|err| {
+        let message = match err {
+            ReleaseTransitionError::AlreadyPublished => "release already published",
+            ReleaseTransitionError::AlreadyDraft => "release already draft",
+        };
+        ApiError::bad_request(message)
+    })?;
+
+    let published_at = if next == ReleaseStatus::Published {
+        Some(now_ts())
+    } else {
+        None
+    };
+
+    let rows = state
+        .db
+        .update_release_status(release_id, next.as_str(), published_at)
+        .await
+        .map_err(|err| {
+            error!("failed to update release status: {err}");
+            ApiError::internal("failed to update release status")
+        })?;
+    if rows == 0 {
+        return Err(ApiError::not_found("release not found"));
+    }
+
+    release.status = next.as_str().to_string();
+    release.published_at = published_at;
+    Ok(Json(ReleaseResponse::from_record(release)))
 }

@@ -5,6 +5,7 @@ mod db;
 mod errors;
 mod handlers;
 mod models;
+mod release;
 mod utils;
 
 use crate::config::Settings;
