@@ -6,6 +6,6 @@ pub mod db;
 mod errors;
 mod handlers;
 mod models;
-mod openapi;
+pub mod openapi;
 mod release;
 mod utils;

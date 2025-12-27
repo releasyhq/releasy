@@ -125,14 +125,23 @@ pub(crate) async fn openapi_json() -> impl IntoResponse {
     Json(ApiDoc::openapi())
 }
 
+pub fn openapi_json_pretty() -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&ApiDoc::openapi())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::Value;
 
+    fn parse_openapi() -> Value {
+        let json = openapi_json_pretty().expect("openapi json");
+        serde_json::from_str(&json).expect("parse openapi json")
+    }
+
     #[test]
     fn openapi_contains_release_paths() {
-        let value = serde_json::to_value(ApiDoc::openapi()).expect("openapi json");
+        let value = parse_openapi();
         let paths = value
             .get("paths")
             .and_then(Value::as_object)
@@ -142,7 +151,7 @@ mod tests {
 
     #[test]
     fn openapi_does_not_include_swagger_ui() {
-        let value = serde_json::to_value(ApiDoc::openapi()).expect("openapi json");
+        let value = parse_openapi();
         let paths = value
             .get("paths")
             .and_then(Value::as_object)
