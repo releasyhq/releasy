@@ -129,7 +129,7 @@ pub async fn admin_create_customer(
         name: name.to_string(),
         plan,
         allowed_prefixes: None,
-        created_at: now_ts(),
+        created_at: now_ts_or_internal()?,
         suspended_at: None,
     };
 
@@ -197,7 +197,7 @@ pub async fn admin_create_key(
         key_type: key_type.clone(),
         scopes: scopes_json,
         expires_at: payload.expires_at,
-        created_at: now_ts(),
+        created_at: now_ts_or_internal()?,
         revoked_at: None,
         last_used_at: None,
     };
@@ -232,7 +232,7 @@ pub async fn admin_revoke_key(
 
     let updated = state
         .db
-        .revoke_api_key(key_id, now_ts())
+        .revoke_api_key(key_id, now_ts_or_internal()?)
         .await
         .map_err(|err| {
             error!("failed to revoke api key: {err}");
@@ -263,7 +263,7 @@ pub async fn create_release(
         product,
         version,
         status: ReleaseStatus::Draft.as_str().to_string(),
-        created_at: now_ts(),
+        created_at: now_ts_or_internal()?,
         published_at: None,
     };
 
@@ -395,6 +395,13 @@ fn normalize_optional(field: &str, value: Option<String>) -> Result<Option<Strin
     }
 }
 
+fn now_ts_or_internal() -> Result<i64, ApiError> {
+    now_ts().map_err(|err| {
+        error!("system time error: {err}");
+        ApiError::internal("system time unavailable")
+    })
+}
+
 fn resolve_pagination(limit: Option<u32>, offset: Option<u32>) -> Result<(i64, i64), ApiError> {
     const DEFAULT_LIMIT: u32 = 50;
     const MAX_LIMIT: u32 = 200;
@@ -454,7 +461,7 @@ async fn apply_release_action_with_rbac(
     })?;
 
     let published_at = if next == ReleaseStatus::Published {
-        Some(now_ts())
+        Some(now_ts_or_internal()?)
     } else {
         None
     };

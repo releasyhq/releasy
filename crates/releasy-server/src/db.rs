@@ -4,7 +4,6 @@ use uuid::Uuid;
 use crate::{
     config::Settings,
     models::{ApiKeyAuthRecord, ApiKeyRecord, Customer, ReleaseRecord},
-    utils::now_ts,
 };
 
 #[derive(Clone)]
@@ -582,9 +581,9 @@ impl Database {
         actor: &str,
         event: &str,
         payload: Option<&str>,
+        created_at: i64,
     ) -> Result<(), sqlx::Error> {
         let id = Uuid::new_v4().to_string();
-        let created_at = now_ts();
         match self {
             Database::Postgres(pool) => {
                 sqlx::query(

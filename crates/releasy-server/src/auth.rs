@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::{
     config::Settings, db::Database, errors::ApiError, models::ApiKeyAuthRecord, utils::now_ts,
@@ -123,7 +123,23 @@ pub async fn authenticate_api_key(
         }
     };
 
-    if let Err(reason) = validate_api_key(&record) {
+    let now = match now_ts() {
+        Ok(now) => now,
+        Err(err) => {
+            error!("system time error: {err}");
+            record_api_key_audit(
+                db,
+                Some(&record.customer_id),
+                Some(&record.id),
+                "reject",
+                "time_unavailable",
+            )
+            .await;
+            return Err(ApiError::internal("system time unavailable"));
+        }
+    };
+
+    if let Err(reason) = validate_api_key(&record, now) {
         record_api_key_audit(
             db,
             Some(&record.customer_id),
@@ -311,12 +327,12 @@ impl ApiKeyInvalidReason {
     }
 }
 
-fn validate_api_key(record: &ApiKeyAuthRecord) -> Result<(), ApiKeyInvalidReason> {
+fn validate_api_key(record: &ApiKeyAuthRecord, now: i64) -> Result<(), ApiKeyInvalidReason> {
     if record.revoked_at.is_some() {
         return Err(ApiKeyInvalidReason::Revoked);
     }
     if let Some(expires_at) = record.expires_at
-        && expires_at <= now_ts()
+        && expires_at <= now
     {
         return Err(ApiKeyInvalidReason::Expired);
     }
@@ -449,6 +465,13 @@ async fn record_api_key_audit(
     outcome: &str,
     reason: &str,
 ) {
+    let created_at = match now_ts() {
+        Ok(ts) => ts,
+        Err(err) => {
+            warn!("system time error, skipping audit event: {err}");
+            return;
+        }
+    };
     let payload = serde_json::json!({
         "outcome": outcome,
         "reason": reason,
@@ -456,7 +479,13 @@ async fn record_api_key_audit(
     })
     .to_string();
     if let Err(err) = db
-        .insert_audit_event(customer_id, "api_key", "api_key.auth", Some(&payload))
+        .insert_audit_event(
+            customer_id,
+            "api_key",
+            "api_key.auth",
+            Some(&payload),
+            created_at,
+        )
         .await
     {
         error!("failed to insert api key audit event: {err}");
@@ -516,7 +545,10 @@ mod tests {
             expires_at: None,
             revoked_at: Some(1),
         };
-        assert_eq!(validate_api_key(&record), Err(ApiKeyInvalidReason::Revoked));
+        assert_eq!(
+            validate_api_key(&record, 0),
+            Err(ApiKeyInvalidReason::Revoked)
+        );
     }
 
     #[test]
