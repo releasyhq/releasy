@@ -1,12 +1,12 @@
 use axum::Router;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 
 use crate::auth::JwksCache;
 use crate::handlers::{
     admin_create_customer, admin_create_key, admin_revoke_key, auth_introspect,
-    create_download_token, create_release, delete_release, list_releases,
-    presign_release_artifact_upload, publish_release, register_release_artifact,
-    resolve_download_token, unpublish_release,
+    create_download_token, create_entitlement, create_release, delete_entitlement, delete_release,
+    list_entitlements, list_releases, presign_release_artifact_upload, publish_release,
+    register_release_artifact, resolve_download_token, unpublish_release, update_entitlement,
 };
 
 #[derive(Clone)]
@@ -19,6 +19,14 @@ pub struct AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/admin/customers", post(admin_create_customer))
+        .route(
+            "/v1/admin/customers/{customer_id}/entitlements",
+            get(list_entitlements).post(create_entitlement),
+        )
+        .route(
+            "/v1/admin/customers/{customer_id}/entitlements/{entitlement_id}",
+            patch(update_entitlement).delete(delete_entitlement),
+        )
         .route("/v1/admin/keys", post(admin_create_key))
         .route("/v1/admin/keys/revoke", post(admin_revoke_key))
         .route("/v1/releases", post(create_release).get(list_releases))

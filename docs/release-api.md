@@ -86,11 +86,21 @@ Notes:
 
 `GET /v1/releases`
 
+Authentication:
+
+- Admin operators: `Authorization: Bearer <jwt>` with `platform_admin`,
+  `platform_support`, or `release_publisher` roles. Admins can filter by any
+  status.
+- API keys: `x-releasy-api-key: <api_key>` with `releases:read` scope. API keys
+  only see `published` releases for products with an active entitlement.
+
 Query parameters:
 
 - `product`: optional product filter
 - `version`: optional version filter
-- `status`: optional status filter (`draft` or `published`)
+- `status`: optional status filter (`draft` or `published`). For API keys,
+  `status` must be `published`.
+- `include_artifacts`: optional boolean to include artifact summaries
 - `limit`: optional page size (default `50`, max `200`, must be > 0)
 - `offset`: optional page offset (default `0`)
 
@@ -105,7 +115,8 @@ Response body:
       "version": "1.2.3",
       "status": "published",
       "created_at": 1735312000,
-      "published_at": 1735312600
+      "published_at": 1735312600,
+      "artifacts": null
     }
   ],
   "limit": 50,
@@ -118,6 +129,13 @@ Example:
 ```bash
 curl -X GET 'http://localhost:8080/v1/releases?product=releasy&status=published' \
   -H 'Authorization: Bearer <jwt>'
+```
+
+API key example:
+
+```bash
+curl -X GET 'http://localhost:8080/v1/releases?include_artifacts=true' \
+  -H 'x-releasy-api-key: <api_key>'
 ```
 
 ### Publish release

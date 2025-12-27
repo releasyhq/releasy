@@ -235,6 +235,51 @@ impl Database {
         }
     }
 
+    pub async fn get_entitlement(
+        &self,
+        customer_id: &str,
+        entitlement_id: &str,
+    ) -> Result<Option<EntitlementRecord>, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let row = sqlx::query(
+                    "SELECT id, customer_id, product, starts_at, ends_at, metadata \
+                     FROM entitlements WHERE customer_id = $1 AND id = $2",
+                )
+                .bind(customer_id)
+                .bind(entitlement_id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| EntitlementRecord {
+                    id: row.get("id"),
+                    customer_id: row.get("customer_id"),
+                    product: row.get("product"),
+                    starts_at: row.get("starts_at"),
+                    ends_at: row.get("ends_at"),
+                    metadata: row.get("metadata"),
+                }))
+            }
+            Database::Sqlite(pool) => {
+                let row = sqlx::query(
+                    "SELECT id, customer_id, product, starts_at, ends_at, metadata \
+                     FROM entitlements WHERE customer_id = ? AND id = ?",
+                )
+                .bind(customer_id)
+                .bind(entitlement_id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| EntitlementRecord {
+                    id: row.get("id"),
+                    customer_id: row.get("customer_id"),
+                    product: row.get("product"),
+                    starts_at: row.get("starts_at"),
+                    ends_at: row.get("ends_at"),
+                    metadata: row.get("metadata"),
+                }))
+            }
+        }
+    }
+
     #[allow(dead_code)]
     pub async fn insert_entitlement(
         &self,
@@ -271,6 +316,71 @@ impl Database {
             }
         }
         Ok(())
+    }
+
+    pub async fn update_entitlement(
+        &self,
+        entitlement: &EntitlementRecord,
+    ) -> Result<u64, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let result = sqlx::query(
+                    "UPDATE entitlements SET product = $1, starts_at = $2, ends_at = $3, metadata = $4 \
+                     WHERE customer_id = $5 AND id = $6",
+                )
+                .bind(&entitlement.product)
+                .bind(entitlement.starts_at)
+                .bind(entitlement.ends_at)
+                .bind(&entitlement.metadata)
+                .bind(&entitlement.customer_id)
+                .bind(&entitlement.id)
+                .execute(pool)
+                .await?;
+                Ok(result.rows_affected())
+            }
+            Database::Sqlite(pool) => {
+                let result = sqlx::query(
+                    "UPDATE entitlements SET product = ?, starts_at = ?, ends_at = ?, metadata = ? \
+                     WHERE customer_id = ? AND id = ?",
+                )
+                .bind(&entitlement.product)
+                .bind(entitlement.starts_at)
+                .bind(entitlement.ends_at)
+                .bind(&entitlement.metadata)
+                .bind(&entitlement.customer_id)
+                .bind(&entitlement.id)
+                .execute(pool)
+                .await?;
+                Ok(result.rows_affected())
+            }
+        }
+    }
+
+    pub async fn delete_entitlement(
+        &self,
+        customer_id: &str,
+        entitlement_id: &str,
+    ) -> Result<u64, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let result =
+                    sqlx::query("DELETE FROM entitlements WHERE customer_id = $1 AND id = $2")
+                        .bind(customer_id)
+                        .bind(entitlement_id)
+                        .execute(pool)
+                        .await?;
+                Ok(result.rows_affected())
+            }
+            Database::Sqlite(pool) => {
+                let result =
+                    sqlx::query("DELETE FROM entitlements WHERE customer_id = ? AND id = ?")
+                        .bind(customer_id)
+                        .bind(entitlement_id)
+                        .execute(pool)
+                        .await?;
+                Ok(result.rows_affected())
+            }
+        }
     }
 
     pub async fn insert_api_key(&self, api_key: &ApiKeyRecord) -> Result<(), sqlx::Error> {
@@ -437,6 +547,58 @@ impl Database {
             }
         }
         Ok(())
+    }
+
+    pub async fn list_artifacts_by_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Vec<ArtifactRecord>, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let rows = sqlx::query(
+                    "SELECT id, release_id, object_key, checksum, size, platform, created_at \
+                     FROM artifacts WHERE release_id = $1 ORDER BY created_at ASC",
+                )
+                .bind(release_id)
+                .fetch_all(pool)
+                .await?;
+                rows.into_iter()
+                    .map(|row| {
+                        Ok(ArtifactRecord {
+                            id: row.try_get("id")?,
+                            release_id: row.try_get("release_id")?,
+                            object_key: row.try_get("object_key")?,
+                            checksum: row.try_get("checksum")?,
+                            size: row.try_get("size")?,
+                            platform: row.try_get("platform")?,
+                            created_at: row.try_get("created_at")?,
+                        })
+                    })
+                    .collect()
+            }
+            Database::Sqlite(pool) => {
+                let rows = sqlx::query(
+                    "SELECT id, release_id, object_key, checksum, size, platform, created_at \
+                     FROM artifacts WHERE release_id = ? ORDER BY created_at ASC",
+                )
+                .bind(release_id)
+                .fetch_all(pool)
+                .await?;
+                rows.into_iter()
+                    .map(|row| {
+                        Ok(ArtifactRecord {
+                            id: row.try_get("id")?,
+                            release_id: row.try_get("release_id")?,
+                            object_key: row.try_get("object_key")?,
+                            checksum: row.try_get("checksum")?,
+                            size: row.try_get("size")?,
+                            platform: row.try_get("platform")?,
+                            created_at: row.try_get("created_at")?,
+                        })
+                    })
+                    .collect()
+            }
+        }
     }
 
     pub async fn get_artifact(
@@ -658,6 +820,62 @@ impl Database {
         }
     }
 
+    pub async fn list_published_releases_for_products(
+        &self,
+        products: &[String],
+        version: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<ReleaseRecord>, sqlx::Error> {
+        if products.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        match self {
+            Database::Postgres(pool) => {
+                let rows =
+                    Self::build_list_published_releases_for_products_query::<sqlx::Postgres>(
+                        products, version, limit, offset,
+                    )
+                    .build()
+                    .fetch_all(pool)
+                    .await?;
+                rows.into_iter()
+                    .map(|row| {
+                        Ok(ReleaseRecord {
+                            id: row.try_get("id")?,
+                            product: row.try_get("product")?,
+                            version: row.try_get("version")?,
+                            status: row.try_get("status")?,
+                            created_at: row.try_get("created_at")?,
+                            published_at: row.try_get("published_at")?,
+                        })
+                    })
+                    .collect()
+            }
+            Database::Sqlite(pool) => {
+                let rows = Self::build_list_published_releases_for_products_query::<sqlx::Sqlite>(
+                    products, version, limit, offset,
+                )
+                .build()
+                .fetch_all(pool)
+                .await?;
+                rows.into_iter()
+                    .map(|row| {
+                        Ok(ReleaseRecord {
+                            id: row.try_get("id")?,
+                            product: row.try_get("product")?,
+                            version: row.try_get("version")?,
+                            status: row.try_get("status")?,
+                            created_at: row.try_get("created_at")?,
+                            published_at: row.try_get("published_at")?,
+                        })
+                    })
+                    .collect()
+            }
+        }
+    }
+
     fn build_list_releases_query<'args, DB>(
         product: Option<&'args str>,
         status: Option<&'args str>,
@@ -702,6 +920,42 @@ impl Database {
                 builder.push(" AND ");
             }
             builder.push("version = ").push_bind(version);
+        }
+
+        builder
+            .push(" ORDER BY created_at DESC LIMIT ")
+            .push_bind(limit)
+            .push(" OFFSET ")
+            .push_bind(offset);
+
+        builder
+    }
+
+    fn build_list_published_releases_for_products_query<'args, DB>(
+        products: &'args [String],
+        version: Option<&'args str>,
+        limit: i64,
+        offset: i64,
+    ) -> sqlx::QueryBuilder<'args, DB>
+    where
+        DB: sqlx::Database,
+        &'args str: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+        i64: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+    {
+        let mut builder = sqlx::QueryBuilder::<DB>::new(
+            "SELECT id, product, version, status, created_at, published_at FROM releases \
+             WHERE status = ",
+        );
+        builder.push_bind("published");
+        builder.push(" AND product IN (");
+        let mut separated = builder.separated(", ");
+        for product in products {
+            separated.push_bind(product.as_str());
+        }
+        builder.push(")");
+
+        if let Some(version) = version {
+            builder.push(" AND version = ").push_bind(version);
         }
 
         builder

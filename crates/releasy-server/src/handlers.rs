@@ -5,6 +5,8 @@ use s3::Bucket;
 use s3::Region;
 use s3::creds::Credentials;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashSet;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
@@ -75,6 +77,59 @@ pub(crate) struct AdminRevokeKeyResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct EntitlementCreateRequest {
+    product: String,
+    starts_at: i64,
+    ends_at: Option<i64>,
+    metadata: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct EntitlementUpdateRequest {
+    product: Option<String>,
+    starts_at: Option<i64>,
+    #[serde(default)]
+    ends_at: Option<Option<i64>>,
+    #[serde(default)]
+    metadata: Option<Option<Value>>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct EntitlementResponse {
+    id: String,
+    customer_id: String,
+    product: String,
+    starts_at: i64,
+    ends_at: Option<i64>,
+    metadata: Option<Value>,
+}
+
+impl EntitlementResponse {
+    fn try_from_record(record: EntitlementRecord) -> Result<Self, ApiError> {
+        let metadata = match record.metadata {
+            Some(metadata) => Some(serde_json::from_str(&metadata).map_err(|err| {
+                error!("failed to parse entitlement metadata: {err}");
+                ApiError::internal("invalid entitlement metadata")
+            })?),
+            None => None,
+        };
+        Ok(Self {
+            id: record.id,
+            customer_id: record.customer_id,
+            product: record.product,
+            starts_at: record.starts_at,
+            ends_at: record.ends_at,
+            metadata,
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct EntitlementListResponse {
+    entitlements: Vec<EntitlementResponse>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct ReleaseCreateRequest {
     product: String,
     version: String,
@@ -85,6 +140,7 @@ pub(crate) struct ReleaseListQuery {
     product: Option<String>,
     status: Option<String>,
     version: Option<String>,
+    include_artifacts: Option<bool>,
     limit: Option<u32>,
     offset: Option<u32>,
 }
@@ -97,10 +153,11 @@ pub(crate) struct ReleaseResponse {
     status: String,
     created_at: i64,
     published_at: Option<i64>,
+    artifacts: Option<Vec<ArtifactSummary>>,
 }
 
 impl ReleaseResponse {
-    fn from_record(record: ReleaseRecord) -> Self {
+    fn from_record(record: ReleaseRecord, artifacts: Option<Vec<ArtifactSummary>>) -> Self {
         Self {
             id: record.id,
             product: record.product,
@@ -108,6 +165,28 @@ impl ReleaseResponse {
             status: record.status,
             created_at: record.created_at,
             published_at: record.published_at,
+            artifacts,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ArtifactSummary {
+    id: String,
+    object_key: String,
+    platform: String,
+    checksum: String,
+    size: i64,
+}
+
+impl ArtifactSummary {
+    fn from_record(record: ArtifactRecord) -> Self {
+        Self {
+            id: record.id,
+            object_key: record.object_key,
+            platform: record.platform,
+            checksum: record.checksum,
+            size: record.size,
         }
     }
 }
@@ -218,6 +297,182 @@ pub async fn admin_create_customer(
         plan: customer.plan,
         created_at: customer.created_at,
     }))
+}
+
+pub async fn list_entitlements(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(customer_id): Path<String>,
+) -> Result<Json<EntitlementListResponse>, ApiError> {
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_support_or_admin(role)?;
+
+    let customer_id = customer_id.trim();
+    if customer_id.is_empty() {
+        return Err(ApiError::bad_request("customer_id is required"));
+    }
+    ensure_customer_exists(&state, customer_id).await?;
+
+    let entitlements = state
+        .db
+        .list_entitlements_by_customer(customer_id)
+        .await
+        .map_err(|err| {
+            error!("failed to list entitlements: {err}");
+            ApiError::internal("failed to list entitlements")
+        })?;
+
+    let mut responses = Vec::with_capacity(entitlements.len());
+    for entitlement in entitlements {
+        responses.push(EntitlementResponse::try_from_record(entitlement)?);
+    }
+
+    Ok(Json(EntitlementListResponse {
+        entitlements: responses,
+    }))
+}
+
+pub async fn create_entitlement(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(customer_id): Path<String>,
+    Json(payload): Json<EntitlementCreateRequest>,
+) -> Result<Json<EntitlementResponse>, ApiError> {
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_admin(role)?;
+
+    let customer_id = customer_id.trim();
+    if customer_id.is_empty() {
+        return Err(ApiError::bad_request("customer_id is required"));
+    }
+    ensure_customer_exists(&state, customer_id).await?;
+
+    let product = normalize_required("product", payload.product)?;
+    if payload.starts_at <= 0 {
+        return Err(ApiError::bad_request("starts_at must be positive"));
+    }
+    if let Some(ends_at) = payload.ends_at
+        && ends_at < payload.starts_at
+    {
+        return Err(ApiError::bad_request(
+            "ends_at must be greater than or equal to starts_at",
+        ));
+    }
+
+    let metadata = payload.metadata.map(metadata_to_string).transpose()?;
+
+    let record = EntitlementRecord {
+        id: Uuid::new_v4().to_string(),
+        customer_id: customer_id.to_string(),
+        product,
+        starts_at: payload.starts_at,
+        ends_at: payload.ends_at,
+        metadata,
+    };
+
+    state.db.insert_entitlement(&record).await.map_err(|err| {
+        error!("failed to create entitlement: {err}");
+        ApiError::internal("failed to create entitlement")
+    })?;
+
+    Ok(Json(EntitlementResponse::try_from_record(record)?))
+}
+
+pub async fn update_entitlement(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((customer_id, entitlement_id)): Path<(String, String)>,
+    Json(payload): Json<EntitlementUpdateRequest>,
+) -> Result<Json<EntitlementResponse>, ApiError> {
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_admin(role)?;
+
+    let customer_id = customer_id.trim();
+    if customer_id.is_empty() {
+        return Err(ApiError::bad_request("customer_id is required"));
+    }
+    ensure_customer_exists(&state, customer_id).await?;
+
+    let mut record = state
+        .db
+        .get_entitlement(customer_id, &entitlement_id)
+        .await
+        .map_err(|err| {
+            error!("failed to get entitlement: {err}");
+            ApiError::internal("failed to get entitlement")
+        })?
+        .ok_or_else(|| ApiError::not_found("entitlement not found"))?;
+
+    if let Some(product) = normalize_optional("product", payload.product)? {
+        record.product = product;
+    }
+
+    if let Some(starts_at) = payload.starts_at {
+        if starts_at <= 0 {
+            return Err(ApiError::bad_request("starts_at must be positive"));
+        }
+        record.starts_at = starts_at;
+    }
+
+    if let Some(ends_at) = payload.ends_at {
+        if let Some(value) = ends_at
+            && value < record.starts_at
+        {
+            return Err(ApiError::bad_request(
+                "ends_at must be greater than or equal to starts_at",
+            ));
+        }
+        record.ends_at = ends_at;
+    } else if let Some(current) = record.ends_at
+        && current < record.starts_at
+    {
+        return Err(ApiError::bad_request(
+            "ends_at must be greater than or equal to starts_at",
+        ));
+    }
+
+    if let Some(metadata) = payload.metadata {
+        record.metadata = metadata.map(metadata_to_string).transpose()?;
+    }
+
+    let rows = state.db.update_entitlement(&record).await.map_err(|err| {
+        error!("failed to update entitlement: {err}");
+        ApiError::internal("failed to update entitlement")
+    })?;
+    if rows == 0 {
+        return Err(ApiError::not_found("entitlement not found"));
+    }
+
+    Ok(Json(EntitlementResponse::try_from_record(record)?))
+}
+
+pub async fn delete_entitlement(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((customer_id, entitlement_id)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_admin(role)?;
+
+    let customer_id = customer_id.trim();
+    if customer_id.is_empty() {
+        return Err(ApiError::bad_request("customer_id is required"));
+    }
+    ensure_customer_exists(&state, customer_id).await?;
+
+    let rows = state
+        .db
+        .delete_entitlement(customer_id, &entitlement_id)
+        .await
+        .map_err(|err| {
+            error!("failed to delete entitlement: {err}");
+            ApiError::internal("failed to delete entitlement")
+        })?;
+    if rows == 0 {
+        return Err(ApiError::not_found("entitlement not found"));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn admin_create_key(
@@ -351,7 +606,7 @@ pub async fn create_release(
         ApiError::internal("failed to create release")
     })?;
 
-    Ok(Json(ReleaseResponse::from_record(record)))
+    Ok(Json(ReleaseResponse::from_record(record, None)))
 }
 
 pub async fn presign_release_artifact_upload(
@@ -659,7 +914,18 @@ pub async fn list_releases(
     headers: HeaderMap,
     Query(query): Query<ReleaseListQuery>,
 ) -> Result<Json<ReleaseListResponse>, ApiError> {
-    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    if headers.contains_key("x-releasy-api-key") {
+        return list_releases_for_customer(&state, &headers, query).await;
+    }
+    list_releases_for_admin(&state, &headers, query).await
+}
+
+async fn list_releases_for_admin(
+    state: &AppState,
+    headers: &HeaderMap,
+    query: ReleaseListQuery,
+) -> Result<Json<ReleaseListResponse>, ApiError> {
+    let role = admin_authorize_with_role(headers, &state.settings, &state.jwks_cache).await?;
     require_release_list_role(role)?;
 
     let product = normalize_optional("product", query.product)?;
@@ -673,6 +939,7 @@ pub async fn list_releases(
         None => None,
     };
 
+    let include_artifacts = query.include_artifacts.unwrap_or(false);
     let (limit, offset) = resolve_pagination(query.limit, query.offset)?;
     let releases = state
         .db
@@ -689,10 +956,136 @@ pub async fn list_releases(
             ApiError::internal("failed to list releases")
         })?;
 
-    let responses = releases
-        .into_iter()
-        .map(ReleaseResponse::from_record)
-        .collect();
+    let mut responses = Vec::with_capacity(releases.len());
+    for record in releases {
+        let artifacts = if include_artifacts {
+            let items = state
+                .db
+                .list_artifacts_by_release(&record.id)
+                .await
+                .map_err(|err| {
+                    error!("failed to list artifacts: {err}");
+                    ApiError::internal("failed to list artifacts")
+                })?;
+            Some(
+                items
+                    .into_iter()
+                    .map(ArtifactSummary::from_record)
+                    .collect(),
+            )
+        } else {
+            None
+        };
+        responses.push(ReleaseResponse::from_record(record, artifacts));
+    }
+
+    Ok(Json(ReleaseListResponse {
+        releases: responses,
+        limit,
+        offset,
+    }))
+}
+
+async fn list_releases_for_customer(
+    state: &AppState,
+    headers: &HeaderMap,
+    query: ReleaseListQuery,
+) -> Result<Json<ReleaseListResponse>, ApiError> {
+    let auth = authenticate_api_key(headers, &state.settings, &state.db).await?;
+    require_scopes(&auth, &["releases:read"])?;
+
+    let product = normalize_optional("product", query.product)?;
+    let version = normalize_optional("version", query.version)?;
+    if let Some(status) = normalize_optional("status", query.status)? {
+        let parsed =
+            ReleaseStatus::parse(&status).ok_or_else(|| ApiError::bad_request("invalid status"))?;
+        if parsed != ReleaseStatus::Published {
+            return Err(ApiError::bad_request("status must be published"));
+        }
+    }
+
+    let include_artifacts = query.include_artifacts.unwrap_or(false);
+    let (limit, offset) = resolve_pagination(query.limit, query.offset)?;
+
+    let entitlements = state
+        .db
+        .list_entitlements_by_customer(&auth.customer_id)
+        .await
+        .map_err(|err| {
+            error!("failed to list entitlements: {err}");
+            ApiError::internal("failed to list entitlements")
+        })?;
+
+    let now = now_ts_or_internal()?;
+    let mut products = HashSet::new();
+    for entitlement in entitlements {
+        if entitlement.starts_at > now {
+            continue;
+        }
+        if let Some(ends_at) = entitlement.ends_at
+            && ends_at < now
+        {
+            continue;
+        }
+        products.insert(entitlement.product);
+    }
+
+    if let Some(product) = product {
+        if products.contains(&product) {
+            products.clear();
+            products.insert(product);
+        } else {
+            return Ok(Json(ReleaseListResponse {
+                releases: Vec::new(),
+                limit,
+                offset,
+            }));
+        }
+    }
+
+    if products.is_empty() {
+        return Ok(Json(ReleaseListResponse {
+            releases: Vec::new(),
+            limit,
+            offset,
+        }));
+    }
+
+    let mut product_list: Vec<String> = products.into_iter().collect();
+    product_list.sort();
+
+    let releases = state
+        .db
+        .list_published_releases_for_products(&product_list, version.as_deref(), limit, offset)
+        .await
+        .map_err(|err| {
+            error!("failed to list releases: {err}");
+            ApiError::internal("failed to list releases")
+        })?;
+
+    let mut responses = Vec::with_capacity(releases.len());
+    for record in releases {
+        let artifacts = if include_artifacts {
+            let items = state
+                .db
+                .list_artifacts_by_release(&record.id)
+                .await
+                .map_err(|err| {
+                    error!("failed to list artifacts: {err}");
+                    ApiError::internal("failed to list artifacts")
+                })?;
+            Some(
+                items
+                    .into_iter()
+                    .map(ArtifactSummary::from_record)
+                    .collect(),
+            )
+        } else {
+            None
+        };
+        responses.push(ReleaseResponse::from_record(record, artifacts));
+    }
+
     Ok(Json(ReleaseListResponse {
         releases: responses,
         limit,
@@ -839,6 +1232,24 @@ fn normalize_optional(field: &str, value: Option<String>) -> Result<Option<Strin
         }
         None => Ok(None),
     }
+}
+
+async fn ensure_customer_exists(state: &AppState, customer_id: &str) -> Result<(), ApiError> {
+    let exists = state.db.customer_exists(customer_id).await.map_err(|err| {
+        error!("failed to lookup customer: {err}");
+        ApiError::internal("customer lookup failed")
+    })?;
+    if !exists {
+        return Err(ApiError::not_found("customer not found"));
+    }
+    Ok(())
+}
+
+fn metadata_to_string(metadata: Value) -> Result<String, ApiError> {
+    serde_json::to_string(&metadata).map_err(|err| {
+        error!("failed to serialize entitlement metadata: {err}");
+        ApiError::bad_request("metadata must be valid JSON")
+    })
 }
 
 fn normalize_object_key_segment(field: &str, value: &str) -> Result<String, ApiError> {
@@ -1057,7 +1468,7 @@ async fn apply_release_action_with_rbac(
 
     release.status = next.as_str().to_string();
     release.published_at = published_at;
-    Ok(Json(ReleaseResponse::from_record(release)))
+    Ok(Json(ReleaseResponse::from_record(release, None)))
 }
 
 #[cfg(test)]
@@ -1069,7 +1480,9 @@ mod tests {
         ApiKeyRecord, ArtifactRecord, Customer, EntitlementRecord, ReleaseRecord, scopes_to_json,
     };
     use crate::release::ReleaseStatus;
+    use axum::extract::Query;
     use axum::http::HeaderMap;
+    use serde_json::json;
 
     #[test]
     fn normalize_key_type_accepts_known_values() {
@@ -1160,6 +1573,12 @@ mod tests {
     fn admin_headers() -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert("x-releasy-admin-key", "secret".parse().unwrap());
+        headers
+    }
+
+    fn api_headers(raw_key: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-releasy-api-key", raw_key.parse().unwrap());
         headers
     }
 
@@ -1741,5 +2160,268 @@ mod tests {
             .await
             .expect_err("missing entitlement");
         assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn create_entitlement_persists_and_lists() {
+        let state = setup_state().await;
+        let now = now_ts_or_internal().expect("now");
+
+        let customer = Customer {
+            id: "entitlement-customer".to_string(),
+            name: "Entitlement Customer".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: now,
+            suspended_at: None,
+        };
+        state
+            .db
+            .insert_customer(&customer)
+            .await
+            .expect("insert customer");
+
+        let payload = EntitlementCreateRequest {
+            product: "releasy".to_string(),
+            starts_at: now - 10,
+            ends_at: Some(now + 1000),
+            metadata: Some(json!({"tier": "pro"})),
+        };
+
+        let Json(response) = create_entitlement(
+            State(state.clone()),
+            admin_headers(),
+            Path(customer.id.clone()),
+            Json(payload),
+        )
+        .await
+        .expect("create entitlement");
+        assert_eq!(response.customer_id, customer.id);
+        assert_eq!(response.product, "releasy");
+        assert_eq!(response.metadata, Some(json!({"tier": "pro"})));
+
+        let Json(list_response) =
+            list_entitlements(State(state), admin_headers(), Path(customer.id))
+                .await
+                .expect("list entitlements");
+        assert_eq!(list_response.entitlements.len(), 1);
+        assert_eq!(list_response.entitlements[0].product, "releasy");
+    }
+
+    #[tokio::test]
+    async fn create_entitlement_rejects_invalid_dates() {
+        let state = setup_state().await;
+        let now = now_ts_or_internal().expect("now");
+
+        let customer = Customer {
+            id: "entitlement-invalid".to_string(),
+            name: "Entitlement Invalid".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: now,
+            suspended_at: None,
+        };
+        state
+            .db
+            .insert_customer(&customer)
+            .await
+            .expect("insert customer");
+
+        let payload = EntitlementCreateRequest {
+            product: "releasy".to_string(),
+            starts_at: now + 10,
+            ends_at: Some(now),
+            metadata: None,
+        };
+
+        let err = create_entitlement(
+            State(state),
+            admin_headers(),
+            Path(customer.id),
+            Json(payload),
+        )
+        .await
+        .expect_err("invalid dates");
+        assert_eq!(err.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_releases_filters_by_entitlement() {
+        let state = setup_state().await;
+        let now = now_ts_or_internal().expect("now");
+
+        let customer = Customer {
+            id: "release-entitlement".to_string(),
+            name: "Release Entitled".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: now,
+            suspended_at: None,
+        };
+        state
+            .db
+            .insert_customer(&customer)
+            .await
+            .expect("insert customer");
+
+        let raw_key = "releasy_release_key";
+        let scopes = vec!["releases:read".to_string()];
+        let api_key = ApiKeyRecord {
+            id: "api-release-key".to_string(),
+            customer_id: customer.id.clone(),
+            key_hash: hash_api_key(raw_key, None),
+            key_prefix: api_key_prefix(raw_key),
+            name: None,
+            key_type: DEFAULT_API_KEY_TYPE.to_string(),
+            scopes: scopes_to_json(&scopes).expect("scopes json"),
+            expires_at: None,
+            created_at: now,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        state
+            .db
+            .insert_api_key(&api_key)
+            .await
+            .expect("insert api key");
+
+        let entitlement = EntitlementRecord {
+            id: "entitlement-release".to_string(),
+            customer_id: customer.id.clone(),
+            product: "releasy".to_string(),
+            starts_at: now - 10,
+            ends_at: None,
+            metadata: None,
+        };
+        state
+            .db
+            .insert_entitlement(&entitlement)
+            .await
+            .expect("insert entitlement");
+
+        let published = ReleaseRecord {
+            id: "release-published".to_string(),
+            product: "releasy".to_string(),
+            version: "1.0.0".to_string(),
+            status: ReleaseStatus::Published.as_str().to_string(),
+            created_at: now,
+            published_at: Some(now),
+        };
+        state
+            .db
+            .insert_release(&published)
+            .await
+            .expect("insert release");
+
+        let draft = ReleaseRecord {
+            id: "release-draft".to_string(),
+            product: "releasy".to_string(),
+            version: "1.1.0".to_string(),
+            status: ReleaseStatus::Draft.as_str().to_string(),
+            created_at: now,
+            published_at: None,
+        };
+        state
+            .db
+            .insert_release(&draft)
+            .await
+            .expect("insert release");
+
+        let other = ReleaseRecord {
+            id: "release-other".to_string(),
+            product: "other".to_string(),
+            version: "2.0.0".to_string(),
+            status: ReleaseStatus::Published.as_str().to_string(),
+            created_at: now,
+            published_at: Some(now),
+        };
+        state
+            .db
+            .insert_release(&other)
+            .await
+            .expect("insert release");
+
+        let query = ReleaseListQuery {
+            product: None,
+            status: None,
+            version: None,
+            include_artifacts: None,
+            limit: None,
+            offset: None,
+        };
+        let Json(response) = list_releases(State(state), api_headers(raw_key), Query(query))
+            .await
+            .expect("list releases");
+        assert_eq!(response.releases.len(), 1);
+        assert_eq!(response.releases[0].product, "releasy");
+        assert_eq!(response.releases[0].status, "published");
+    }
+
+    #[tokio::test]
+    async fn list_releases_returns_empty_without_entitlement() {
+        let state = setup_state().await;
+        let now = now_ts_or_internal().expect("now");
+
+        let customer = Customer {
+            id: "release-no-entitlement".to_string(),
+            name: "Release No Entitlement".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: now,
+            suspended_at: None,
+        };
+        state
+            .db
+            .insert_customer(&customer)
+            .await
+            .expect("insert customer");
+
+        let raw_key = "releasy_release_key_2";
+        let scopes = vec!["releases:read".to_string()];
+        let api_key = ApiKeyRecord {
+            id: "api-release-key-2".to_string(),
+            customer_id: customer.id.clone(),
+            key_hash: hash_api_key(raw_key, None),
+            key_prefix: api_key_prefix(raw_key),
+            name: None,
+            key_type: DEFAULT_API_KEY_TYPE.to_string(),
+            scopes: scopes_to_json(&scopes).expect("scopes json"),
+            expires_at: None,
+            created_at: now,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        state
+            .db
+            .insert_api_key(&api_key)
+            .await
+            .expect("insert api key");
+
+        let release = ReleaseRecord {
+            id: "release-visible".to_string(),
+            product: "releasy".to_string(),
+            version: "3.0.0".to_string(),
+            status: ReleaseStatus::Published.as_str().to_string(),
+            created_at: now,
+            published_at: Some(now),
+        };
+        state
+            .db
+            .insert_release(&release)
+            .await
+            .expect("insert release");
+
+        let query = ReleaseListQuery {
+            product: None,
+            status: None,
+            version: None,
+            include_artifacts: None,
+            limit: None,
+            offset: None,
+        };
+        let Json(response) = list_releases(State(state), api_headers(raw_key), Query(query))
+            .await
+            .expect("list releases");
+        assert!(response.releases.is_empty());
     }
 }
