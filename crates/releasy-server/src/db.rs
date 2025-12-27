@@ -425,26 +425,53 @@ impl Database {
         release_id: &str,
         status: &str,
         published_at: Option<i64>,
+        expected_status: Option<&str>,
     ) -> Result<u64, sqlx::Error> {
         let rows = match self {
-            Database::Postgres(pool) => {
-                sqlx::query("UPDATE releases SET status = $1, published_at = $2 WHERE id = $3")
-                    .bind(status)
-                    .bind(published_at)
-                    .bind(release_id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
-            Database::Sqlite(pool) => {
-                sqlx::query("UPDATE releases SET status = ?, published_at = ? WHERE id = ?")
-                    .bind(status)
-                    .bind(published_at)
-                    .bind(release_id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
+            Database::Postgres(pool) => match expected_status {
+                Some(expected) => sqlx::query(
+                    "UPDATE releases SET status = $1, published_at = $2 \
+                     WHERE id = $3 AND status = $4",
+                )
+                .bind(status)
+                .bind(published_at)
+                .bind(release_id)
+                .bind(expected)
+                .execute(pool)
+                .await?
+                .rows_affected(),
+                None => {
+                    sqlx::query("UPDATE releases SET status = $1, published_at = $2 WHERE id = $3")
+                        .bind(status)
+                        .bind(published_at)
+                        .bind(release_id)
+                        .execute(pool)
+                        .await?
+                        .rows_affected()
+                }
+            },
+            Database::Sqlite(pool) => match expected_status {
+                Some(expected) => sqlx::query(
+                    "UPDATE releases SET status = ?, published_at = ? \
+                     WHERE id = ? AND status = ?",
+                )
+                .bind(status)
+                .bind(published_at)
+                .bind(release_id)
+                .bind(expected)
+                .execute(pool)
+                .await?
+                .rows_affected(),
+                None => {
+                    sqlx::query("UPDATE releases SET status = ?, published_at = ? WHERE id = ?")
+                        .bind(status)
+                        .bind(published_at)
+                        .bind(release_id)
+                        .execute(pool)
+                        .await?
+                        .rows_affected()
+                }
+            },
         };
         Ok(rows)
     }
@@ -537,6 +564,23 @@ mod tests {
         let db = Database::connect(&settings).await.expect("db connect");
         db.migrate().await.expect("db migrate");
         db
+    }
+
+    fn api_key_record(customer_id: &str) -> ApiKeyRecord {
+        let key_id = Uuid::new_v4().to_string();
+        ApiKeyRecord {
+            id: key_id.clone(),
+            customer_id: customer_id.to_string(),
+            key_hash: format!("hash-{key_id}"),
+            key_prefix: "releasy_test".to_string(),
+            name: None,
+            key_type: "human".to_string(),
+            scopes: "[]".to_string(),
+            expires_at: None,
+            created_at: 1,
+            revoked_at: None,
+            last_used_at: None,
+        }
     }
 
     struct Case {
@@ -712,6 +756,33 @@ FROM releases ORDER BY created_at DESC LIMIT ? OFFSET ?",
         .bind("releasy")
         .fetch_all(pool)
         .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn api_keys_fk_allows_existing_customer() {
+        let db = setup_db().await;
+        let customer = Customer {
+            id: "customer".to_string(),
+            name: "Customer".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: 1,
+            suspended_at: None,
+        };
+        db.insert_customer(&customer).await.expect("customer");
+
+        let record = api_key_record(&customer.id);
+        db.insert_api_key(&record).await.expect("api key");
+    }
+
+    #[tokio::test]
+    async fn api_keys_fk_rejects_missing_customer() {
+        let db = setup_db().await;
+
+        let record = api_key_record("missing-customer");
+        let result = db.insert_api_key(&record).await;
 
         assert!(result.is_err());
     }

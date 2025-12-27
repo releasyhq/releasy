@@ -1,6 +1,10 @@
 use axum::extract::{Json, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::sync::{Arc, Mutex};
+#[cfg(test)]
+use tokio::sync::Barrier;
 use tracing::error;
 use uuid::Uuid;
 
@@ -17,6 +21,9 @@ use crate::models::{
 };
 use crate::release::{ReleaseAction, ReleaseStatus, ReleaseTransitionError, apply_release_action};
 use crate::utils::now_ts;
+
+#[cfg(test)]
+static RELEASE_UPDATE_BARRIER: Mutex<Option<Arc<Barrier>>> = Mutex::new(None);
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AdminCreateCustomerRequest {
@@ -504,16 +511,35 @@ async fn apply_release_action_with_rbac(
         None
     };
 
+    #[cfg(test)]
+    {
+        let barrier = RELEASE_UPDATE_BARRIER
+            .lock()
+            .expect("release update barrier")
+            .clone();
+        if let Some(barrier) = barrier {
+            barrier.wait().await;
+        }
+    }
+
     let rows = state
         .db
-        .update_release_status(release_id, next.as_str(), published_at)
+        .update_release_status(
+            release_id,
+            next.as_str(),
+            published_at,
+            Some(current.as_str()),
+        )
         .await
         .map_err(|err| {
             error!("failed to update release status: {err}");
             ApiError::internal("failed to update release status")
         })?;
     if rows == 0 {
-        return Err(ApiError::not_found("release not found"));
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "release status changed, retry",
+        ));
     }
 
     release.status = next.as_str().to_string();
@@ -524,6 +550,11 @@ async fn apply_release_action_with_rbac(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Settings;
+    use crate::db::Database;
+    use crate::models::ReleaseRecord;
+    use crate::release::ReleaseStatus;
+    use axum::http::HeaderMap;
 
     #[test]
     fn normalize_key_type_accepts_known_values() {
@@ -576,5 +607,167 @@ mod tests {
     fn validate_scopes_rejects_unknown() {
         let scopes = vec!["keys:read".to_string(), "other:scope".to_string()];
         assert!(validate_scopes(&scopes).is_err());
+    }
+
+    fn test_settings() -> Settings {
+        Settings {
+            bind_addr: "127.0.0.1:8080".to_string(),
+            log_level: "info".to_string(),
+            database_url: "sqlite::memory:".to_string(),
+            database_max_connections: 1,
+            admin_api_key: Some("secret".to_string()),
+            api_key_pepper: None,
+            operator_jwks_url: None,
+            operator_issuer: None,
+            operator_audience: None,
+            operator_resource: None,
+            operator_jwks_ttl_seconds: 300,
+            operator_jwt_leeway_seconds: 0,
+        }
+    }
+
+    async fn setup_state() -> AppState {
+        let settings = test_settings();
+        let db = Database::connect(&settings).await.expect("db connect");
+        db.migrate().await.expect("db migrate");
+        AppState {
+            db,
+            settings,
+            jwks_cache: None,
+        }
+    }
+
+    fn admin_headers() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-releasy-admin-key", "secret".parse().unwrap());
+        headers
+    }
+
+    #[tokio::test]
+    async fn apply_release_action_with_rbac_conflicts_on_stale_publish() {
+        let state = setup_state().await;
+        let release = ReleaseRecord {
+            id: "release-1".to_string(),
+            product: "releasy".to_string(),
+            version: "1.0.0".to_string(),
+            status: ReleaseStatus::Draft.as_str().to_string(),
+            created_at: 1,
+            published_at: None,
+        };
+        state
+            .db
+            .insert_release(&release)
+            .await
+            .expect("insert release");
+
+        let barrier = Arc::new(Barrier::new(2));
+        {
+            let mut guard = RELEASE_UPDATE_BARRIER
+                .lock()
+                .expect("release update barrier");
+            *guard = Some(barrier);
+        }
+
+        let headers = admin_headers();
+        let state_a = state.clone();
+        let state_b = state.clone();
+        let headers_a = headers.clone();
+        let headers_b = headers.clone();
+
+        let (result_a, result_b) = tokio::join!(
+            apply_release_action_with_rbac(
+                &state_a,
+                &headers_a,
+                &release.id,
+                ReleaseAction::Publish
+            ),
+            apply_release_action_with_rbac(
+                &state_b,
+                &headers_b,
+                &release.id,
+                ReleaseAction::Publish
+            ),
+        );
+
+        {
+            let mut guard = RELEASE_UPDATE_BARRIER
+                .lock()
+                .expect("release update barrier");
+            *guard = None;
+        }
+
+        let results = [result_a, result_b];
+        let successes = results.iter().filter(|result| result.is_ok()).count();
+        let conflicts = results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .filter(|err| err.status() == StatusCode::CONFLICT)
+            .count();
+        assert_eq!(successes, 1);
+        assert_eq!(conflicts, 1);
+    }
+
+    #[tokio::test]
+    async fn apply_release_action_with_rbac_conflicts_on_stale_unpublish() {
+        let state = setup_state().await;
+        let release = ReleaseRecord {
+            id: "release-2".to_string(),
+            product: "releasy".to_string(),
+            version: "1.0.1".to_string(),
+            status: ReleaseStatus::Published.as_str().to_string(),
+            created_at: 1,
+            published_at: Some(1),
+        };
+        state
+            .db
+            .insert_release(&release)
+            .await
+            .expect("insert release");
+
+        let barrier = Arc::new(Barrier::new(2));
+        {
+            let mut guard = RELEASE_UPDATE_BARRIER
+                .lock()
+                .expect("release update barrier");
+            *guard = Some(barrier);
+        }
+
+        let headers = admin_headers();
+        let state_a = state.clone();
+        let state_b = state.clone();
+        let headers_a = headers.clone();
+        let headers_b = headers.clone();
+
+        let (result_a, result_b) = tokio::join!(
+            apply_release_action_with_rbac(
+                &state_a,
+                &headers_a,
+                &release.id,
+                ReleaseAction::Unpublish
+            ),
+            apply_release_action_with_rbac(
+                &state_b,
+                &headers_b,
+                &release.id,
+                ReleaseAction::Unpublish
+            ),
+        );
+
+        {
+            let mut guard = RELEASE_UPDATE_BARRIER
+                .lock()
+                .expect("release update barrier");
+            *guard = None;
+        }
+
+        let results = [result_a, result_b];
+        let successes = results.iter().filter(|result| result.is_ok()).count();
+        let conflicts = results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .filter(|err| err.status() == StatusCode::CONFLICT)
+            .count();
+        assert_eq!(successes, 1);
+        assert_eq!(conflicts, 1);
     }
 }
