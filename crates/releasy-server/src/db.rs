@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     config::Settings,
-    models::{ApiKeyAuthRecord, ApiKeyRecord, Customer, ReleaseRecord},
+    models::{ApiKeyAuthRecord, ApiKeyRecord, ArtifactRecord, Customer, ReleaseRecord},
 };
 
 #[derive(Clone)]
@@ -264,6 +264,44 @@ impl Database {
                 .bind(&release.status)
                 .bind(release.created_at)
                 .bind(release.published_at)
+                .execute(pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn insert_artifact(&self, artifact: &ArtifactRecord) -> Result<(), sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                sqlx::query(
+                    "INSERT INTO artifacts \
+                     (id, release_id, object_key, checksum, size, platform, created_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                )
+                .bind(&artifact.id)
+                .bind(&artifact.release_id)
+                .bind(&artifact.object_key)
+                .bind(&artifact.checksum)
+                .bind(artifact.size)
+                .bind(&artifact.platform)
+                .bind(artifact.created_at)
+                .execute(pool)
+                .await?;
+            }
+            Database::Sqlite(pool) => {
+                sqlx::query(
+                    "INSERT INTO artifacts \
+                     (id, release_id, object_key, checksum, size, platform, created_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&artifact.id)
+                .bind(&artifact.release_id)
+                .bind(&artifact.object_key)
+                .bind(&artifact.checksum)
+                .bind(artifact.size)
+                .bind(&artifact.platform)
+                .bind(artifact.created_at)
                 .execute(pool)
                 .await?;
             }
@@ -556,6 +594,7 @@ mod tests {
             operator_resource: None,
             operator_jwks_ttl_seconds: 300,
             operator_jwt_leeway_seconds: 0,
+            artifact_settings: None,
         }
     }
 

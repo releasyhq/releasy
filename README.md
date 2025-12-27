@@ -17,3 +17,8 @@ Releasy is an API-first platform to manage:
 ## Status
 
 🚧 Early development – feedback welcome
+
+## Artifacts
+
+Presigned artifact uploads and registration are documented in
+`docs/artifacts.md`.

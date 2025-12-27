@@ -55,6 +55,17 @@ pub struct ReleaseRecord {
     pub published_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactRecord {
+    pub id: String,
+    pub release_id: String,
+    pub object_key: String,
+    pub checksum: String,
+    pub size: i64,
+    pub platform: String,
+    pub created_at: i64,
+}
+
 pub const DEFAULT_API_KEY_TYPE: &str = "human";
 
 pub const ALLOWED_SCOPES: &[&str] = &[
