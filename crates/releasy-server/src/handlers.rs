@@ -12,8 +12,8 @@ use crate::auth::{
 };
 use crate::errors::ApiError;
 use crate::models::{
-    ApiKeyIntrospection, ApiKeyRecord, Customer, DEFAULT_API_KEY_TYPE, ReleaseRecord,
-    default_scopes, normalize_scopes, scopes_to_json,
+    ALLOWED_SCOPES, ApiKeyIntrospection, ApiKeyRecord, Customer, DEFAULT_API_KEY_TYPE,
+    ReleaseRecord, default_scopes, normalize_scopes, scopes_to_json,
 };
 use crate::release::{ReleaseAction, ReleaseStatus, ReleaseTransitionError, apply_release_action};
 use crate::utils::now_ts;
@@ -177,6 +177,7 @@ pub async fn admin_create_key(
         }
         None => default_scopes(),
     };
+    validate_scopes(&scopes)?;
     let scopes_json =
         scopes_to_json(&scopes).map_err(|_| ApiError::internal("failed to encode scopes"))?;
 
@@ -448,6 +449,15 @@ fn validate_expires_at(expires_at: Option<i64>) -> Result<Option<i64>, ApiError>
     Ok(expires_at)
 }
 
+fn validate_scopes(scopes: &[String]) -> Result<(), ApiError> {
+    for scope in scopes {
+        if !ALLOWED_SCOPES.iter().any(|allowed| allowed == scope) {
+            return Err(ApiError::bad_request("invalid scope"));
+        }
+    }
+    Ok(())
+}
+
 fn require_release_list_role(role: AdminRole) -> Result<(), ApiError> {
     match role {
         AdminRole::PlatformAdmin | AdminRole::PlatformSupport | AdminRole::ReleasePublisher => {
@@ -554,5 +564,17 @@ mod tests {
             validate_expires_at(expires_at).expect("expires"),
             expires_at
         );
+    }
+
+    #[test]
+    fn validate_scopes_accepts_allowed() {
+        let scopes = default_scopes();
+        assert!(validate_scopes(&scopes).is_ok());
+    }
+
+    #[test]
+    fn validate_scopes_rejects_unknown() {
+        let scopes = vec!["keys:read".to_string(), "other:scope".to_string()];
+        assert!(validate_scopes(&scopes).is_err());
     }
 }

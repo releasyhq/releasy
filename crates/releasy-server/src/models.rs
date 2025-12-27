@@ -57,7 +57,7 @@ pub struct ReleaseRecord {
 
 pub const DEFAULT_API_KEY_TYPE: &str = "human";
 
-pub const DEFAULT_SCOPES: &[&str] = &[
+pub const ALLOWED_SCOPES: &[&str] = &[
     "releases:read",
     "downloads:read",
     "downloads:token",
@@ -65,6 +65,8 @@ pub const DEFAULT_SCOPES: &[&str] = &[
     "keys:write",
     "audit:read",
 ];
+
+pub const DEFAULT_SCOPES: &[&str] = ALLOWED_SCOPES;
 
 pub fn default_scopes() -> Vec<String> {
     DEFAULT_SCOPES
