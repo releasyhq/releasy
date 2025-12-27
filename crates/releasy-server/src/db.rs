@@ -511,7 +511,33 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Settings;
     use sqlx::Execute;
+    use sqlx::Row;
+
+    fn test_settings() -> Settings {
+        Settings {
+            bind_addr: "127.0.0.1:8080".to_string(),
+            log_level: "info".to_string(),
+            database_url: "sqlite::memory:".to_string(),
+            database_max_connections: 1,
+            admin_api_key: None,
+            api_key_pepper: None,
+            operator_jwks_url: None,
+            operator_issuer: None,
+            operator_audience: None,
+            operator_resource: None,
+            operator_jwks_ttl_seconds: 300,
+            operator_jwt_leeway_seconds: 0,
+        }
+    }
+
+    async fn setup_db() -> Database {
+        let settings = test_settings();
+        let db = Database::connect(&settings).await.expect("db connect");
+        db.migrate().await.expect("db migrate");
+        db
+    }
 
     struct Case {
         product: Option<&'static str>,
@@ -628,5 +654,65 @@ FROM releases ORDER BY created_at DESC LIMIT ? OFFSET ?",
             let sql = builder.build().sql().to_string();
             assert_eq!(sql, case.expected_sqlite);
         }
+    }
+
+    #[tokio::test]
+    async fn release_index_used_for_product_status_filter() {
+        let db = setup_db().await;
+        let pool = match &db {
+            Database::Sqlite(pool) => pool,
+            Database::Postgres(_) => panic!("sqlite expected"),
+        };
+
+        sqlx::query(
+            "INSERT INTO releases (id, product, version, status, created_at, published_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("release-1")
+        .bind("releasy")
+        .bind("1.0.0")
+        .bind("published")
+        .bind(1_i64)
+        .bind(None::<i64>)
+        .execute(pool)
+        .await
+        .expect("insert release");
+
+        let rows = sqlx::query(
+            "EXPLAIN QUERY PLAN SELECT id FROM releases \
+             WHERE product = ? AND status = ? ORDER BY created_at DESC",
+        )
+        .bind("releasy")
+        .bind("published")
+        .fetch_all(pool)
+        .await
+        .expect("plan");
+
+        let details: Vec<String> = rows.into_iter().map(|row| row.get("detail")).collect();
+        assert!(
+            details
+                .iter()
+                .any(|detail| detail.contains("releases_product_status_created_at_idx")),
+            "plan details: {details:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn release_index_hint_rejects_unknown_index() {
+        let db = setup_db().await;
+        let pool = match &db {
+            Database::Sqlite(pool) => pool,
+            Database::Postgres(_) => panic!("sqlite expected"),
+        };
+
+        let result = sqlx::query(
+            "EXPLAIN QUERY PLAN SELECT id FROM releases \
+             INDEXED BY releases_missing_idx WHERE product = ?",
+        )
+        .bind("releasy")
+        .fetch_all(pool)
+        .await;
+
+        assert!(result.is_err());
     }
 }
