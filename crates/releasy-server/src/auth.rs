@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
+use tokio::time::sleep;
 use tracing::{error, warn};
 
 use crate::{
@@ -47,14 +48,44 @@ struct JwksState {
     jwks: JwkSet,
 }
 
+const JWKS_FETCH_TIMEOUT: Duration = Duration::from_secs(8);
+const JWKS_RETRY_BACKOFF: Duration = Duration::from_millis(200);
+const JWKS_MAX_RETRIES: usize = 1;
+const JWKS_TIMEOUT_MESSAGE: &str = "operator jwks request timed out";
+
+struct JwksFetchFailure {
+    api_error: ApiError,
+    retryable: bool,
+}
+
+impl JwksFetchFailure {
+    fn timeout() -> Self {
+        Self {
+            api_error: ApiError::new(StatusCode::SERVICE_UNAVAILABLE, JWKS_TIMEOUT_MESSAGE),
+            retryable: false,
+        }
+    }
+
+    fn unavailable(retryable: bool) -> Self {
+        Self {
+            api_error: ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "operator jwks unavailable"),
+            retryable,
+        }
+    }
+}
+
 impl JwksCache {
     pub fn new(settings: &Settings) -> Option<Self> {
         let jwks_url = settings.operator_jwks_url.clone()?;
         let ttl = Duration::from_secs(settings.operator_jwks_ttl_seconds as u64);
+        let client = Client::builder()
+            .timeout(JWKS_FETCH_TIMEOUT)
+            .build()
+            .expect("failed to build jwks client");
         Some(Self {
             jwks_url,
             ttl,
-            client: Client::new(),
+            client,
             state: Arc::new(RwLock::new(None)),
         })
     }
@@ -77,22 +108,58 @@ impl JwksCache {
     }
 
     async fn fetch_jwks(&self) -> Result<JwkSet, ApiError> {
+        let mut attempt = 0;
+        let mut backoff = JWKS_RETRY_BACKOFF;
+        loop {
+            match self.fetch_jwks_once().await {
+                Ok(jwks) => return Ok(jwks),
+                Err(failure) => {
+                    if !failure.retryable || attempt >= JWKS_MAX_RETRIES {
+                        return Err(failure.api_error);
+                    }
+                    warn!(
+                        "jwks fetch failed, retrying in {:?} (attempt {}/{})",
+                        backoff,
+                        attempt + 1,
+                        JWKS_MAX_RETRIES + 1
+                    );
+                    sleep(backoff).await;
+                    backoff = backoff.saturating_mul(2);
+                    attempt += 1;
+                }
+            }
+        }
+    }
+
+    async fn fetch_jwks_once(&self) -> Result<JwkSet, JwksFetchFailure> {
         let response = self
             .client
             .get(&self.jwks_url)
             .send()
             .await
             .map_err(|err| {
+                if err.is_timeout() {
+                    warn!("jwks request timed out: {err}");
+                    return JwksFetchFailure::timeout();
+                }
                 error!("failed to fetch jwks: {err}");
-                ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "operator jwks unavailable")
+                JwksFetchFailure::unavailable(err.is_connect())
             })?;
         let response = response.error_for_status().map_err(|err| {
+            let retryable = err
+                .status()
+                .map(|status| status.is_server_error())
+                .unwrap_or(false);
             error!("jwks returned error status: {err}");
-            ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "operator jwks unavailable")
+            JwksFetchFailure::unavailable(retryable)
         })?;
         response.json::<JwkSet>().await.map_err(|err| {
+            if err.is_timeout() {
+                warn!("jwks response timed out: {err}");
+                return JwksFetchFailure::timeout();
+            }
             error!("failed to parse jwks: {err}");
-            ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "operator jwks unavailable")
+            JwksFetchFailure::unavailable(false)
         })
     }
 }
@@ -521,6 +588,8 @@ mod tests {
     };
     use axum::http::HeaderMap;
     use serde_json::json;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
 
     fn test_settings() -> Settings {
         Settings {
@@ -747,5 +816,64 @@ mod tests {
     fn looks_like_jwt_detects_format() {
         assert!(looks_like_jwt("a.b.c"));
         assert!(!looks_like_jwt("not-a-jwt"));
+    }
+
+    #[tokio::test]
+    async fn jwks_cache_fetches_jwks() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let body = r#"{"keys":[]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await.expect("write");
+        });
+
+        let cache = JwksCache {
+            jwks_url: format!("http://{addr}/jwks"),
+            ttl: Duration::from_secs(30),
+            client: Client::builder()
+                .timeout(Duration::from_millis(200))
+                .build()
+                .expect("client"),
+            state: Arc::new(RwLock::new(None)),
+        };
+
+        let jwks = cache.fetch_jwks().await.expect("jwks");
+        assert!(jwks.keys.is_empty());
+        server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn jwks_cache_timeout_returns_service_unavailable() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("accept");
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            drop(socket);
+        });
+
+        let cache = JwksCache {
+            jwks_url: format!("http://{addr}/jwks"),
+            ttl: Duration::from_secs(30),
+            client: Client::builder()
+                .timeout(Duration::from_millis(100))
+                .build()
+                .expect("client"),
+            state: Arc::new(RwLock::new(None)),
+        };
+
+        let result = tokio::time::timeout(Duration::from_secs(2), cache.fetch_jwks()).await;
+        let err = result
+            .expect("fetch timed out")
+            .expect_err("expected timeout");
+        assert_eq!(err.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(err.message(), JWKS_TIMEOUT_MESSAGE);
+        server.await.expect("server");
     }
 }
