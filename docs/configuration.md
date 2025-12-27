@@ -44,6 +44,7 @@ openssl rand -hex 32
 
 The pepper adds an extra layer of security to API key hashes. If set,
 it should be kept constant; changing it will invalidate all existing keys.
+API keys are hashed with Argon2id using a per-key salt.
 
 ### Operator JWT (JWKS)
 

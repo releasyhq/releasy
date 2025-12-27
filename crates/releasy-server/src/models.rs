@@ -29,6 +29,7 @@ pub struct ApiKeyRecord {
 pub struct ApiKeyAuthRecord {
     pub id: String,
     pub customer_id: String,
+    pub key_hash: String,
     pub key_type: String,
     pub scopes: String,
     pub expires_at: Option<i64>,

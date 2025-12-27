@@ -51,44 +51,52 @@ impl Database {
         }
     }
 
-    pub async fn get_api_key_by_hash(
+    pub async fn get_api_keys_by_prefix(
         &self,
-        key_hash: &str,
-    ) -> Result<Option<ApiKeyAuthRecord>, sqlx::Error> {
+        key_prefix: &str,
+    ) -> Result<Vec<ApiKeyAuthRecord>, sqlx::Error> {
         match self {
             Database::Postgres(pool) => {
-                let row = sqlx::query(
-                    "SELECT id, customer_id, key_type, scopes, expires_at, revoked_at \
-                     FROM api_keys WHERE key_hash = $1",
+                let rows = sqlx::query(
+                    "SELECT id, customer_id, key_hash, key_type, scopes, expires_at, revoked_at \
+                     FROM api_keys WHERE key_prefix = $1",
                 )
-                .bind(key_hash)
-                .fetch_optional(pool)
+                .bind(key_prefix)
+                .fetch_all(pool)
                 .await?;
-                Ok(row.map(|row| ApiKeyAuthRecord {
-                    id: row.get("id"),
-                    customer_id: row.get("customer_id"),
-                    key_type: row.get("key_type"),
-                    scopes: row.get("scopes"),
-                    expires_at: row.get("expires_at"),
-                    revoked_at: row.get("revoked_at"),
-                }))
+                Ok(rows
+                    .into_iter()
+                    .map(|row| ApiKeyAuthRecord {
+                        id: row.get("id"),
+                        customer_id: row.get("customer_id"),
+                        key_hash: row.get("key_hash"),
+                        key_type: row.get("key_type"),
+                        scopes: row.get("scopes"),
+                        expires_at: row.get("expires_at"),
+                        revoked_at: row.get("revoked_at"),
+                    })
+                    .collect())
             }
             Database::Sqlite(pool) => {
-                let row = sqlx::query(
-                    "SELECT id, customer_id, key_type, scopes, expires_at, revoked_at \
-                     FROM api_keys WHERE key_hash = ?",
+                let rows = sqlx::query(
+                    "SELECT id, customer_id, key_hash, key_type, scopes, expires_at, revoked_at \
+                     FROM api_keys WHERE key_prefix = ?",
                 )
-                .bind(key_hash)
-                .fetch_optional(pool)
+                .bind(key_prefix)
+                .fetch_all(pool)
                 .await?;
-                Ok(row.map(|row| ApiKeyAuthRecord {
-                    id: row.get("id"),
-                    customer_id: row.get("customer_id"),
-                    key_type: row.get("key_type"),
-                    scopes: row.get("scopes"),
-                    expires_at: row.get("expires_at"),
-                    revoked_at: row.get("revoked_at"),
-                }))
+                Ok(rows
+                    .into_iter()
+                    .map(|row| ApiKeyAuthRecord {
+                        id: row.get("id"),
+                        customer_id: row.get("customer_id"),
+                        key_hash: row.get("key_hash"),
+                        key_type: row.get("key_type"),
+                        scopes: row.get("scopes"),
+                        expires_at: row.get("expires_at"),
+                        revoked_at: row.get("revoked_at"),
+                    })
+                    .collect())
             }
         }
     }
@@ -447,6 +455,31 @@ impl Database {
                 .bind(key_id)
                 .execute(pool)
                 .await?;
+                Ok(result.rows_affected())
+            }
+        }
+    }
+
+    pub async fn update_api_key_hash(
+        &self,
+        key_id: &str,
+        key_hash: &str,
+    ) -> Result<u64, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let result = sqlx::query("UPDATE api_keys SET key_hash = $1 WHERE id = $2")
+                    .bind(key_hash)
+                    .bind(key_id)
+                    .execute(pool)
+                    .await?;
+                Ok(result.rows_affected())
+            }
+            Database::Sqlite(pool) => {
+                let result = sqlx::query("UPDATE api_keys SET key_hash = ? WHERE id = ?")
+                    .bind(key_hash)
+                    .bind(key_id)
+                    .execute(pool)
+                    .await?;
                 Ok(result.rows_affected())
             }
         }

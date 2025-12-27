@@ -513,7 +513,7 @@ pub async fn admin_create_key(
     let key_type = normalize_key_type(payload.key_type)?;
 
     let raw_key = generate_api_key()?;
-    let key_hash = hash_api_key(&raw_key, state.settings.api_key_pepper.as_deref());
+    let key_hash = hash_api_key(&raw_key, state.settings.api_key_pepper.as_deref())?;
     let key_prefix = api_key_prefix(&raw_key);
 
     let expires_at = validate_expires_at(payload.expires_at)?;
@@ -1973,7 +1973,7 @@ mod tests {
         let api_key = ApiKeyRecord {
             id: "api-key-download".to_string(),
             customer_id: customer.id.clone(),
-            key_hash: hash_api_key(raw_key, None),
+            key_hash: hash_api_key(raw_key, None).expect("hash api key"),
             key_prefix: api_key_prefix(raw_key),
             name: None,
             key_type: DEFAULT_API_KEY_TYPE.to_string(),
@@ -2101,7 +2101,7 @@ mod tests {
         let api_key = ApiKeyRecord {
             id: "api-key-no-entitlement".to_string(),
             customer_id: customer.id.clone(),
-            key_hash: hash_api_key(raw_key, None),
+            key_hash: hash_api_key(raw_key, None).expect("hash api key"),
             key_prefix: api_key_prefix(raw_key),
             name: None,
             key_type: DEFAULT_API_KEY_TYPE.to_string(),
@@ -2269,7 +2269,7 @@ mod tests {
         let api_key = ApiKeyRecord {
             id: "api-release-key".to_string(),
             customer_id: customer.id.clone(),
-            key_hash: hash_api_key(raw_key, None),
+            key_hash: hash_api_key(raw_key, None).expect("hash api key"),
             key_prefix: api_key_prefix(raw_key),
             name: None,
             key_type: DEFAULT_API_KEY_TYPE.to_string(),
@@ -2381,7 +2381,7 @@ mod tests {
         let api_key = ApiKeyRecord {
             id: "api-release-key-2".to_string(),
             customer_id: customer.id.clone(),
-            key_hash: hash_api_key(raw_key, None),
+            key_hash: hash_api_key(raw_key, None).expect("hash api key"),
             key_prefix: api_key_prefix(raw_key),
             name: None,
             key_type: DEFAULT_API_KEY_TYPE.to_string(),

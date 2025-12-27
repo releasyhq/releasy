@@ -1,3 +1,10 @@
+use argon2::{
+    Argon2,
+    password_hash::{
+        PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
+        rand_core::OsRng as PasswordOsRng,
+    },
+};
 use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::jwk::JwkSet;
@@ -177,11 +184,37 @@ pub async fn authenticate_api_key(
         }
     };
 
-    let key_hash = hash_api_key(&raw_key, settings.api_key_pepper.as_deref());
-    let record = db.get_api_key_by_hash(&key_hash).await.map_err(|err| {
-        error!("api key lookup failed: {err}");
-        ApiError::internal("api key lookup failed")
-    })?;
+    let key_prefix = api_key_prefix(&raw_key);
+    let candidates = db
+        .get_api_keys_by_prefix(&key_prefix)
+        .await
+        .map_err(|err| {
+            error!("api key lookup failed: {err}");
+            ApiError::internal("api key lookup failed")
+        })?;
+    if candidates.is_empty() {
+        record_api_key_audit(db, None, None, "reject", "not_found").await;
+        return Err(ApiError::unauthorized());
+    }
+
+    let pepper = settings.api_key_pepper.as_deref();
+    let input = api_key_input_bytes(&raw_key, pepper);
+    let legacy_hash = legacy_hash_from_bytes(&input);
+    let mut matched_legacy = false;
+    let mut record = None;
+    for candidate in candidates {
+        if is_argon2_hash(&candidate.key_hash) {
+            if verify_argon2_hash(&input, &candidate.key_hash) {
+                record = Some(candidate);
+                break;
+            }
+        } else if candidate.key_hash == legacy_hash {
+            matched_legacy = true;
+            record = Some(candidate);
+            break;
+        }
+    }
+
     let record = match record {
         Some(record) => record,
         None => {
@@ -232,6 +265,28 @@ pub async fn authenticate_api_key(
             return Err(err);
         }
     };
+
+    if matched_legacy {
+        let new_hash = hash_api_key(&raw_key, pepper)?;
+        let updated = db
+            .update_api_key_hash(&record.id, &new_hash)
+            .await
+            .map_err(|err| {
+                error!("failed to update api key hash: {err}");
+                ApiError::internal("failed to update api key hash")
+            })?;
+        if updated == 0 {
+            record_api_key_audit(
+                db,
+                Some(&record.customer_id),
+                Some(&record.id),
+                "reject",
+                "not_found",
+            )
+            .await;
+            return Err(ApiError::unauthorized());
+        }
+    }
 
     let updated = db
         .update_api_key_last_used(&record.id, now)
@@ -362,8 +417,18 @@ pub fn api_key_prefix(key: &str) -> String {
     key.chars().take(12).collect()
 }
 
-pub fn hash_api_key(key: &str, pepper: Option<&str>) -> String {
-    hash_secret(key, pepper)
+pub fn hash_api_key(key: &str, pepper: Option<&str>) -> Result<String, ApiError> {
+    let input = api_key_input_bytes(key, pepper);
+    let salt = SaltString::generate(&mut PasswordOsRng);
+    let argon2 = Argon2::default();
+    let hash = argon2
+        .hash_password(&input, &salt)
+        .map_err(|err| {
+            error!("failed to hash api key: {err}");
+            ApiError::internal("failed to hash api key")
+        })?
+        .to_string();
+    Ok(hash)
 }
 
 pub fn hash_download_token(token: &str, pepper: Option<&str>) -> String {
@@ -371,13 +436,40 @@ pub fn hash_download_token(token: &str, pepper: Option<&str>) -> String {
 }
 
 fn hash_secret(value: &str, pepper: Option<&str>) -> String {
+    let input = api_key_input_bytes(value, pepper);
+    legacy_hash_from_bytes(&input)
+}
+
+fn legacy_hash_from_bytes(input: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(value.as_bytes());
-    if let Some(pepper) = pepper {
-        hasher.update(pepper.as_bytes());
-    }
+    hasher.update(input);
     let digest = hasher.finalize();
     hex::encode(digest)
+}
+
+fn api_key_input_bytes(key: &str, pepper: Option<&str>) -> Vec<u8> {
+    let extra = pepper.map(|value| value.len()).unwrap_or(0);
+    let mut bytes = Vec::with_capacity(key.len() + extra);
+    bytes.extend_from_slice(key.as_bytes());
+    if let Some(pepper) = pepper {
+        bytes.extend_from_slice(pepper.as_bytes());
+    }
+    bytes
+}
+
+fn is_argon2_hash(value: &str) -> bool {
+    value.starts_with("$argon2")
+}
+
+fn verify_argon2_hash(input: &[u8], stored_hash: &str) -> bool {
+    let parsed = match PasswordHash::new(stored_hash) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            warn!("invalid api key hash: {err}");
+            return false;
+        }
+    };
+    Argon2::default().verify_password(input, &parsed).is_ok()
 }
 
 fn api_key_from_headers(headers: &HeaderMap) -> Option<String> {
@@ -648,11 +740,31 @@ mod tests {
         }
     }
 
+    async fn fetch_key_hash(db: &Database, key_id: &str) -> String {
+        match db {
+            Database::Sqlite(pool) => {
+                sqlx::query_scalar("SELECT key_hash FROM api_keys WHERE id = ?")
+                    .bind(key_id)
+                    .fetch_one(pool)
+                    .await
+                    .expect("key_hash")
+            }
+            Database::Postgres(_) => panic!("sqlite expected"),
+        }
+    }
+
     #[test]
-    fn hash_api_key_changes_with_pepper() {
-        let no_pepper = hash_api_key("releasy_abc", None);
-        let with_pepper = hash_api_key("releasy_abc", Some("pepper"));
-        assert_ne!(no_pepper, with_pepper);
+    fn hash_api_key_verifies_matching_key() {
+        let hash = hash_api_key("releasy_abc", Some("pepper")).expect("hash");
+        let input = api_key_input_bytes("releasy_abc", Some("pepper"));
+        assert!(verify_argon2_hash(&input, &hash));
+    }
+
+    #[test]
+    fn hash_api_key_rejects_wrong_key() {
+        let hash = hash_api_key("releasy_abc", None).expect("hash");
+        let input = api_key_input_bytes("releasy_wrong", None);
+        assert!(!verify_argon2_hash(&input, &hash));
     }
 
     #[test]
@@ -672,6 +784,7 @@ mod tests {
         let record = ApiKeyAuthRecord {
             id: "key".to_string(),
             customer_id: "customer".to_string(),
+            key_hash: "hash".to_string(),
             key_type: "human".to_string(),
             scopes: "[]".to_string(),
             expires_at: None,
@@ -703,7 +816,7 @@ mod tests {
         let record = ApiKeyRecord {
             id: "key".to_string(),
             customer_id: customer.id.clone(),
-            key_hash: hash_api_key(raw_key, None),
+            key_hash: hash_api_key(raw_key, None).expect("hash"),
             key_prefix: api_key_prefix(raw_key),
             name: None,
             key_type: DEFAULT_API_KEY_TYPE.to_string(),
@@ -728,6 +841,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn authenticate_api_key_upgrades_legacy_hash() {
+        let settings = test_settings();
+        let db = setup_db(&settings).await;
+
+        let customer = Customer {
+            id: "customer".to_string(),
+            name: "Customer".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: 1,
+            suspended_at: None,
+        };
+        db.insert_customer(&customer).await.expect("customer");
+
+        let raw_key = "releasy_test_key";
+        let legacy_hash = legacy_hash_from_bytes(&api_key_input_bytes(raw_key, None));
+        let scopes = default_scopes();
+        let record = ApiKeyRecord {
+            id: "key".to_string(),
+            customer_id: customer.id.clone(),
+            key_hash: legacy_hash.clone(),
+            key_prefix: api_key_prefix(raw_key),
+            name: None,
+            key_type: DEFAULT_API_KEY_TYPE.to_string(),
+            scopes: scopes_to_json(&scopes).expect("scopes"),
+            expires_at: None,
+            created_at: 1,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        let key_id = record.id.clone();
+        db.insert_api_key(&record).await.expect("api key");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-releasy-api-key", raw_key.parse().unwrap());
+        authenticate_api_key(&headers, &settings, &db)
+            .await
+            .expect("auth");
+
+        let updated_hash = fetch_key_hash(&db, &key_id).await;
+        assert!(updated_hash.starts_with("$argon2"));
+        assert_ne!(updated_hash, legacy_hash);
+    }
+
+    #[tokio::test]
     async fn authenticate_api_key_does_not_update_last_used_on_failure() {
         let settings = test_settings();
         let db = setup_db(&settings).await;
@@ -747,7 +905,7 @@ mod tests {
         let record = ApiKeyRecord {
             id: "key".to_string(),
             customer_id: customer.id.clone(),
-            key_hash: hash_api_key(raw_key, None),
+            key_hash: hash_api_key(raw_key, None).expect("hash"),
             key_prefix: api_key_prefix(raw_key),
             name: None,
             key_type: DEFAULT_API_KEY_TYPE.to_string(),
@@ -791,7 +949,7 @@ mod tests {
         let record = ApiKeyRecord {
             id: "key".to_string(),
             customer_id: customer.id.clone(),
-            key_hash: hash_api_key(raw_key, None),
+            key_hash: hash_api_key(raw_key, None).expect("hash"),
             key_prefix: api_key_prefix(raw_key),
             name: None,
             key_type: DEFAULT_API_KEY_TYPE.to_string(),
