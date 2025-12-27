@@ -6,6 +6,7 @@ pub struct Settings {
     pub log_level: String,
     pub database_url: String,
     pub database_max_connections: u32,
+    pub download_token_ttl_seconds: u32,
     pub admin_api_key: Option<String>,
     pub api_key_pepper: Option<String>,
     pub operator_jwks_url: Option<String>,
@@ -39,6 +40,11 @@ impl Settings {
             .map(|value| parse_u32("RELEASY_DATABASE_MAX_CONNECTIONS", &value))
             .transpose()?
             .unwrap_or(5);
+        let download_token_ttl_seconds = env::var("RELEASY_DOWNLOAD_TOKEN_TTL_SECONDS")
+            .ok()
+            .map(|value| parse_u32("RELEASY_DOWNLOAD_TOKEN_TTL_SECONDS", &value))
+            .transpose()?
+            .unwrap_or(600);
         let admin_api_key = optional_env("RELEASY_ADMIN_API_KEY");
         let api_key_pepper = optional_env("RELEASY_API_KEY_PEPPER");
         let operator_jwks_url = optional_env("RELEASY_OPERATOR_JWKS_URL");
@@ -101,6 +107,7 @@ impl Settings {
             log_level,
             database_url,
             database_max_connections,
+            download_token_ttl_seconds,
             admin_api_key,
             api_key_pepper,
             operator_jwks_url,

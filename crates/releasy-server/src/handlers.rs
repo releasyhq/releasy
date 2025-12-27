@@ -1,5 +1,6 @@
 use axum::extract::{Json, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::IntoResponse;
 use s3::Bucket;
 use s3::Region;
 use s3::creds::Credentials;
@@ -14,14 +15,15 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::auth::{
     AdminRole, admin_authorize_with_role, api_key_prefix, authenticate_api_key, generate_api_key,
-    hash_api_key, require_admin, require_release_publisher, require_scopes,
-    require_support_or_admin,
+    generate_download_token, hash_api_key, hash_download_token, require_admin,
+    require_release_publisher, require_scopes, require_support_or_admin,
 };
 use crate::config::ArtifactSettings;
 use crate::errors::ApiError;
 use crate::models::{
     ALLOWED_SCOPES, ApiKeyIntrospection, ApiKeyRecord, ArtifactRecord, Customer,
-    DEFAULT_API_KEY_TYPE, ReleaseRecord, default_scopes, normalize_scopes, scopes_to_json,
+    DEFAULT_API_KEY_TYPE, DownloadTokenRecord, EntitlementRecord, ReleaseRecord, default_scopes,
+    normalize_scopes, scopes_to_json,
 };
 use crate::release::{ReleaseAction, ReleaseStatus, ReleaseTransitionError, apply_release_action};
 use crate::utils::now_ts;
@@ -163,6 +165,19 @@ impl ArtifactRegisterResponse {
             created_at: record.created_at,
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DownloadTokenRequest {
+    artifact_id: String,
+    purpose: Option<String>,
+    expires_in_seconds: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct DownloadTokenResponse {
+    download_url: String,
+    expires_at: i64,
 }
 
 pub async fn admin_create_customer(
@@ -444,6 +459,199 @@ pub async fn register_release_artifact(
     })?;
 
     Ok(Json(ArtifactRegisterResponse::from_record(record)))
+}
+
+pub async fn create_download_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<DownloadTokenRequest>,
+) -> Result<Json<DownloadTokenResponse>, ApiError> {
+    let auth = authenticate_api_key(&headers, &state.settings, &state.db).await?;
+    require_scopes(&auth, &["downloads:token"])?;
+
+    let artifact_id = normalize_required("artifact_id", payload.artifact_id)?;
+    let artifact_uuid = Uuid::parse_str(&artifact_id)
+        .map_err(|_| ApiError::bad_request("artifact_id must be a valid UUID"))?;
+
+    let artifact = state
+        .db
+        .get_artifact(&artifact_uuid.to_string())
+        .await
+        .map_err(|err| {
+            error!("failed to get artifact: {err}");
+            ApiError::internal("failed to lookup artifact")
+        })?
+        .ok_or_else(|| ApiError::not_found("artifact not found"))?;
+
+    let release = state
+        .db
+        .get_release(&artifact.release_id)
+        .await
+        .map_err(|err| {
+            error!("failed to get release: {err}");
+            ApiError::internal("failed to lookup release")
+        })?
+        .ok_or_else(|| ApiError::not_found("release not found"))?;
+
+    let status = ReleaseStatus::parse(&release.status)
+        .ok_or_else(|| ApiError::internal("invalid status"))?;
+    if status != ReleaseStatus::Published {
+        return Err(ApiError::forbidden("release not published"));
+    }
+
+    let entitlements = state
+        .db
+        .list_entitlements_by_customer(&auth.customer_id)
+        .await
+        .map_err(|err| {
+            error!("failed to list entitlements: {err}");
+            ApiError::internal("failed to list entitlements")
+        })?;
+
+    let now = now_ts_or_internal()?;
+    if !is_product_entitled(&entitlements, &release.product, now) {
+        return Err(ApiError::forbidden("entitlement required"));
+    }
+
+    let ttl = resolve_requested_ttl(
+        payload.expires_in_seconds,
+        state.settings.download_token_ttl_seconds,
+        "expires_in_seconds",
+    )?;
+    let token = generate_download_token()?;
+    let token_hash = hash_download_token(&token, state.settings.api_key_pepper.as_deref());
+    let expires_at = now + i64::from(ttl);
+    let purpose = payload
+        .purpose
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let record = DownloadTokenRecord {
+        token_hash,
+        artifact_id: artifact.id,
+        customer_id: auth.customer_id,
+        purpose,
+        expires_at,
+        created_at: now,
+    };
+
+    state
+        .db
+        .insert_download_token(&record)
+        .await
+        .map_err(|err| {
+            error!("failed to create download token: {err}");
+            ApiError::internal("failed to create download token")
+        })?;
+
+    let download_url = build_download_url(&headers, &token)?;
+
+    Ok(Json(DownloadTokenResponse {
+        download_url,
+        expires_at,
+    }))
+}
+
+pub async fn resolve_download_token(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(ApiError::bad_request("token is required"));
+    }
+
+    let token_hash = hash_download_token(token, state.settings.api_key_pepper.as_deref());
+    let record = state
+        .db
+        .get_download_token_by_hash(&token_hash)
+        .await
+        .map_err(|err| {
+            error!("failed to lookup download token: {err}");
+            ApiError::internal("failed to lookup download token")
+        })?
+        .ok_or_else(|| ApiError::not_found("download token not found"))?;
+
+    let customer = state
+        .db
+        .get_customer(&record.customer_id)
+        .await
+        .map_err(|err| {
+            error!("failed to lookup download token customer: {err}");
+            ApiError::internal("failed to lookup customer")
+        })?
+        .ok_or_else(|| ApiError::not_found("download token not found"))?;
+    if customer.suspended_at.is_some() {
+        return Err(ApiError::not_found("download token not found"));
+    }
+
+    let now = now_ts_or_internal()?;
+    if record.expires_at <= now {
+        return Err(ApiError::not_found("download token expired"));
+    }
+
+    let artifact = state
+        .db
+        .get_artifact(&record.artifact_id)
+        .await
+        .map_err(|err| {
+            error!("failed to get artifact: {err}");
+            ApiError::internal("failed to lookup artifact")
+        })?
+        .ok_or_else(|| ApiError::not_found("artifact not found"))?;
+
+    let release = state
+        .db
+        .get_release(&artifact.release_id)
+        .await
+        .map_err(|err| {
+            error!("failed to get release: {err}");
+            ApiError::internal("failed to lookup release")
+        })?
+        .ok_or_else(|| ApiError::not_found("release not found"))?;
+
+    let status = ReleaseStatus::parse(&release.status)
+        .ok_or_else(|| ApiError::internal("invalid status"))?;
+    if status != ReleaseStatus::Published {
+        return Err(ApiError::not_found("release not available"));
+    }
+
+    let entitlements = state
+        .db
+        .list_entitlements_by_customer(&record.customer_id)
+        .await
+        .map_err(|err| {
+            error!("failed to list entitlements: {err}");
+            ApiError::internal("failed to list entitlements")
+        })?;
+    if !is_product_entitled(&entitlements, &release.product, now) {
+        return Err(ApiError::not_found("release not available"));
+    }
+
+    let remaining = record.expires_at.saturating_sub(now);
+    if remaining == 0 {
+        return Err(ApiError::not_found("download token expired"));
+    }
+
+    let artifact_settings = artifact_settings(&state.settings)?;
+    let bucket = build_artifact_bucket(artifact_settings)?;
+    let presigned_url = bucket
+        .presign_get(
+            &artifact.object_key,
+            remaining.min(i64::from(u32::MAX)) as u32,
+            None,
+        )
+        .await
+        .map_err(|err| {
+            error!("failed to presign download: {err}");
+            ApiError::internal("failed to presign download")
+        })?;
+
+    let mut response = (StatusCode::FOUND, [(header::LOCATION, presigned_url)]).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
 }
 
 pub async fn list_releases(
@@ -732,6 +940,44 @@ fn validate_scopes(scopes: &[String]) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn resolve_requested_ttl(requested: Option<u32>, max: u32, field: &str) -> Result<u32, ApiError> {
+    let ttl = requested.unwrap_or(max);
+    if ttl == 0 {
+        return Err(ApiError::bad_request(format!("{field} must be positive")));
+    }
+    if ttl > max {
+        return Err(ApiError::bad_request(format!("{field} must be <= {max}")));
+    }
+    Ok(ttl)
+}
+
+fn build_download_url(headers: &HeaderMap, token: &str) -> Result<String, ApiError> {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::bad_request("missing Host header"))?;
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("https");
+    Ok(format!("{proto}://{host}/v1/downloads/{token}"))
+}
+
+fn is_product_entitled(entitlements: &[EntitlementRecord], product: &str, now: i64) -> bool {
+    entitlements.iter().any(|entitlement| {
+        entitlement.product == product
+            && entitlement.starts_at <= now
+            && entitlement
+                .ends_at
+                .map(|ends_at| ends_at >= now)
+                .unwrap_or(true)
+    })
+}
+
 fn require_release_list_role(role: AdminRole) -> Result<(), ApiError> {
     match role {
         AdminRole::PlatformAdmin | AdminRole::PlatformSupport | AdminRole::ReleasePublisher => {
@@ -819,7 +1065,9 @@ mod tests {
     use super::*;
     use crate::config::{ArtifactSettings, Settings};
     use crate::db::Database;
-    use crate::models::ReleaseRecord;
+    use crate::models::{
+        ApiKeyRecord, ArtifactRecord, Customer, EntitlementRecord, ReleaseRecord, scopes_to_json,
+    };
     use crate::release::ReleaseStatus;
     use axum::http::HeaderMap;
 
@@ -882,6 +1130,7 @@ mod tests {
             log_level: "info".to_string(),
             database_url: "sqlite::memory:".to_string(),
             database_max_connections: 1,
+            download_token_ttl_seconds: 600,
             admin_api_key: Some("secret".to_string()),
             api_key_pepper: None,
             operator_jwks_url: None,
@@ -1279,5 +1528,218 @@ mod tests {
         .await
         .expect_err("register");
         assert_eq!(err.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn download_token_flow_redirects() {
+        let state = setup_state_with_settings(test_settings_with_artifacts()).await;
+        let now = now_ts_or_internal().expect("now");
+
+        let customer = Customer {
+            id: "customer-download".to_string(),
+            name: "Download Customer".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: now,
+            suspended_at: None,
+        };
+        state
+            .db
+            .insert_customer(&customer)
+            .await
+            .expect("insert customer");
+
+        let raw_key = "releasy_test_key";
+        let scopes = vec!["downloads:token".to_string()];
+        let api_key = ApiKeyRecord {
+            id: "api-key-download".to_string(),
+            customer_id: customer.id.clone(),
+            key_hash: hash_api_key(raw_key, None),
+            key_prefix: api_key_prefix(raw_key),
+            name: None,
+            key_type: DEFAULT_API_KEY_TYPE.to_string(),
+            scopes: scopes_to_json(&scopes).expect("scopes json"),
+            expires_at: None,
+            created_at: now,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        state
+            .db
+            .insert_api_key(&api_key)
+            .await
+            .expect("insert api key");
+
+        let release = ReleaseRecord {
+            id: "release-download".to_string(),
+            product: "releasy".to_string(),
+            version: "1.2.3".to_string(),
+            status: ReleaseStatus::Published.as_str().to_string(),
+            created_at: now,
+            published_at: Some(now),
+        };
+        state
+            .db
+            .insert_release(&release)
+            .await
+            .expect("insert release");
+
+        let artifact_id = Uuid::new_v4().to_string();
+        let object_key =
+            build_artifact_object_key(&release, "linux-x86_64", &artifact_id, "bundle.tar.gz")
+                .expect("object key");
+        let artifact = ArtifactRecord {
+            id: artifact_id.clone(),
+            release_id: release.id.clone(),
+            object_key,
+            checksum: "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+                .to_string(),
+            size: 1024,
+            platform: "linux-x86_64".to_string(),
+            created_at: now,
+        };
+        state
+            .db
+            .insert_artifact(&artifact)
+            .await
+            .expect("insert artifact");
+
+        let entitlement = EntitlementRecord {
+            id: "entitlement-download".to_string(),
+            customer_id: customer.id.clone(),
+            product: release.product.clone(),
+            starts_at: now - 10,
+            ends_at: None,
+            metadata: None,
+        };
+        state
+            .db
+            .insert_entitlement(&entitlement)
+            .await
+            .expect("insert entitlement");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-releasy-api-key", raw_key.parse().unwrap());
+        headers.insert(header::HOST, "downloads.test".parse().unwrap());
+
+        let request = DownloadTokenRequest {
+            artifact_id,
+            purpose: Some("ci".to_string()),
+            expires_in_seconds: None,
+        };
+        let Json(response) = create_download_token(State(state.clone()), headers, Json(request))
+            .await
+            .expect("create token");
+        assert!(response.download_url.contains("/v1/downloads/"));
+
+        let token = response
+            .download_url
+            .split("/v1/downloads/")
+            .nth(1)
+            .expect("token");
+        assert!(!token.is_empty());
+
+        let response = resolve_download_token(State(state), Path(token.to_string()))
+            .await
+            .expect("resolve token")
+            .into_response();
+        assert_eq!(response.status(), StatusCode::FOUND);
+        let location = response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(!location.is_empty());
+        let cache_control = response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert_eq!(cache_control, "no-store");
+    }
+
+    #[tokio::test]
+    async fn create_download_token_rejects_missing_entitlement() {
+        let state = setup_state_with_settings(test_settings_with_artifacts()).await;
+        let now = now_ts_or_internal().expect("now");
+
+        let customer = Customer {
+            id: "customer-no-entitlement".to_string(),
+            name: "Missing Entitlement".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: now,
+            suspended_at: None,
+        };
+        state
+            .db
+            .insert_customer(&customer)
+            .await
+            .expect("insert customer");
+
+        let raw_key = "releasy_test_key_2";
+        let scopes = vec!["downloads:token".to_string()];
+        let api_key = ApiKeyRecord {
+            id: "api-key-no-entitlement".to_string(),
+            customer_id: customer.id.clone(),
+            key_hash: hash_api_key(raw_key, None),
+            key_prefix: api_key_prefix(raw_key),
+            name: None,
+            key_type: DEFAULT_API_KEY_TYPE.to_string(),
+            scopes: scopes_to_json(&scopes).expect("scopes json"),
+            expires_at: None,
+            created_at: now,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        state
+            .db
+            .insert_api_key(&api_key)
+            .await
+            .expect("insert api key");
+
+        let release = ReleaseRecord {
+            id: "release-no-entitlement".to_string(),
+            product: "releasy".to_string(),
+            version: "2.0.0".to_string(),
+            status: ReleaseStatus::Published.as_str().to_string(),
+            created_at: now,
+            published_at: Some(now),
+        };
+        state
+            .db
+            .insert_release(&release)
+            .await
+            .expect("insert release");
+
+        let artifact = ArtifactRecord {
+            id: Uuid::new_v4().to_string(),
+            release_id: release.id.clone(),
+            object_key: "releases/releasy/2.0.0/linux-x86_64/bundle.tar.gz".to_string(),
+            checksum: "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+                .to_string(),
+            size: 512,
+            platform: "linux-x86_64".to_string(),
+            created_at: now,
+        };
+        state
+            .db
+            .insert_artifact(&artifact)
+            .await
+            .expect("insert artifact");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-releasy-api-key", raw_key.parse().unwrap());
+        headers.insert(header::HOST, "downloads.test".parse().unwrap());
+
+        let request = DownloadTokenRequest {
+            artifact_id: artifact.id.clone(),
+            purpose: None,
+            expires_in_seconds: None,
+        };
+        let err = create_download_token(State(state), headers, Json(request))
+            .await
+            .expect_err("missing entitlement");
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
     }
 }

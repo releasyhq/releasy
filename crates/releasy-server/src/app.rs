@@ -1,11 +1,12 @@
 use axum::Router;
-use axum::routing::{delete, post};
+use axum::routing::{delete, get, post};
 
 use crate::auth::JwksCache;
 use crate::handlers::{
-    admin_create_customer, admin_create_key, admin_revoke_key, auth_introspect, create_release,
-    delete_release, list_releases, presign_release_artifact_upload, publish_release,
-    register_release_artifact, unpublish_release,
+    admin_create_customer, admin_create_key, admin_revoke_key, auth_introspect,
+    create_download_token, create_release, delete_release, list_releases,
+    presign_release_artifact_upload, publish_release, register_release_artifact,
+    resolve_download_token, unpublish_release,
 };
 
 #[derive(Clone)]
@@ -35,6 +36,8 @@ pub fn router(state: AppState) -> Router {
             "/v1/releases/{release_id}/artifacts",
             post(register_release_artifact),
         )
+        .route("/v1/downloads/token", post(create_download_token))
+        .route("/v1/downloads/{token}", get(resolve_download_token))
         .route("/v1/auth/introspect", post(auth_introspect))
         .with_state(state)
 }

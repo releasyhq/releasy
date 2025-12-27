@@ -21,8 +21,9 @@ Releasy is an API-first platform to manage:
 - [Operator Auth](docs/operator-auth.md) – JWT/JWKS authentication and RBAC
 - [Release API](docs/release-api.md) – Release lifecycle endpoints
 - [Artifacts](docs/artifacts.md) – Presigned uploads and artifact registration
+- [Downloads](docs/downloads.md) – Download token issuance and redirects
 - [Introspection](docs/introspect-api.md) – API key introspection
-s
+
 ## Status
 
 🚧 Early development – feedback welcome

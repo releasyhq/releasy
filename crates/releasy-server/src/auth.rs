@@ -348,12 +348,26 @@ pub fn generate_api_key() -> Result<String, ApiError> {
     Ok(format!("releasy_{token}"))
 }
 
+pub fn generate_download_token() -> Result<String, ApiError> {
+    let mut bytes = [0u8; 32];
+    OsRng.try_fill_bytes(&mut bytes).map_err(|err| {
+        error!("failed to generate download token bytes: {err}");
+        ApiError::internal("failed to generate download token")
+    })?;
+    let token = URL_SAFE_NO_PAD.encode(bytes);
+    Ok(format!("releasy_dl_{token}"))
+}
+
 pub fn api_key_prefix(key: &str) -> String {
     key.chars().take(12).collect()
 }
 
 pub fn hash_api_key(key: &str, pepper: Option<&str>) -> String {
     hash_secret(key, pepper)
+}
+
+pub fn hash_download_token(token: &str, pepper: Option<&str>) -> String {
+    hash_secret(token, pepper)
 }
 
 fn hash_secret(value: &str, pepper: Option<&str>) -> String {
@@ -602,6 +616,7 @@ mod tests {
             log_level: "info".to_string(),
             database_url: "sqlite::memory:".to_string(),
             database_max_connections: 1,
+            download_token_ttl_seconds: 600,
             admin_api_key: Some("secret".to_string()),
             api_key_pepper: None,
             operator_jwks_url: None,

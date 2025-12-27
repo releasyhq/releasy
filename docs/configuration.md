@@ -65,6 +65,12 @@ export RELEASY_OPERATOR_AUDIENCE="releasy"
 export RELEASY_OPERATOR_RESOURCE="releasy"
 ```
 
+## Downloads
+
+| Variable                             | Required | Default | Description                                    |
+|--------------------------------------|----------|---------|------------------------------------------------|
+| `RELEASY_DOWNLOAD_TOKEN_TTL_SECONDS` | no       | `600`   | Maximum lifetime for download tokens (seconds) |
+
 ## Artifact Storage (S3)
 
 All artifact variables must be set together, or none at all.

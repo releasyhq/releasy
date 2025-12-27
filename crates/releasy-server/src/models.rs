@@ -46,6 +46,16 @@ pub struct ApiKeyIntrospection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntitlementRecord {
+    pub id: String,
+    pub customer_id: String,
+    pub product: String,
+    pub starts_at: i64,
+    pub ends_at: Option<i64>,
+    pub metadata: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReleaseRecord {
     pub id: String,
     pub product: String,
@@ -63,6 +73,16 @@ pub struct ArtifactRecord {
     pub checksum: String,
     pub size: i64,
     pub platform: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadTokenRecord {
+    pub token_hash: String,
+    pub artifact_id: String,
+    pub customer_id: String,
+    pub purpose: Option<String>,
+    pub expires_at: i64,
     pub created_at: i64,
 }
 

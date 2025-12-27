@@ -3,7 +3,10 @@ use uuid::Uuid;
 
 use crate::{
     config::Settings,
-    models::{ApiKeyAuthRecord, ApiKeyRecord, ArtifactRecord, Customer, ReleaseRecord},
+    models::{
+        ApiKeyAuthRecord, ApiKeyRecord, ArtifactRecord, Customer, DownloadTokenRecord,
+        EntitlementRecord, ReleaseRecord,
+    },
 };
 
 #[derive(Clone)]
@@ -136,6 +139,133 @@ impl Database {
                 .bind(&customer.allowed_prefixes)
                 .bind(customer.created_at)
                 .bind(customer.suspended_at)
+                .execute(pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn get_customer(&self, customer_id: &str) -> Result<Option<Customer>, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let row = sqlx::query(
+                    "SELECT id, name, plan, allowed_prefixes, created_at, suspended_at \
+                     FROM customers WHERE id = $1",
+                )
+                .bind(customer_id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| Customer {
+                    id: row.get("id"),
+                    name: row.get("name"),
+                    plan: row.get("plan"),
+                    allowed_prefixes: row.get("allowed_prefixes"),
+                    created_at: row.get("created_at"),
+                    suspended_at: row.get("suspended_at"),
+                }))
+            }
+            Database::Sqlite(pool) => {
+                let row = sqlx::query(
+                    "SELECT id, name, plan, allowed_prefixes, created_at, suspended_at \
+                     FROM customers WHERE id = ?",
+                )
+                .bind(customer_id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| Customer {
+                    id: row.get("id"),
+                    name: row.get("name"),
+                    plan: row.get("plan"),
+                    allowed_prefixes: row.get("allowed_prefixes"),
+                    created_at: row.get("created_at"),
+                    suspended_at: row.get("suspended_at"),
+                }))
+            }
+        }
+    }
+
+    pub async fn list_entitlements_by_customer(
+        &self,
+        customer_id: &str,
+    ) -> Result<Vec<EntitlementRecord>, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let rows = sqlx::query(
+                    "SELECT id, customer_id, product, starts_at, ends_at, metadata \
+                     FROM entitlements WHERE customer_id = $1 ORDER BY starts_at ASC",
+                )
+                .bind(customer_id)
+                .fetch_all(pool)
+                .await?;
+                rows.into_iter()
+                    .map(|row| {
+                        Ok(EntitlementRecord {
+                            id: row.try_get("id")?,
+                            customer_id: row.try_get("customer_id")?,
+                            product: row.try_get("product")?,
+                            starts_at: row.try_get("starts_at")?,
+                            ends_at: row.try_get("ends_at")?,
+                            metadata: row.try_get("metadata")?,
+                        })
+                    })
+                    .collect()
+            }
+            Database::Sqlite(pool) => {
+                let rows = sqlx::query(
+                    "SELECT id, customer_id, product, starts_at, ends_at, metadata \
+                     FROM entitlements WHERE customer_id = ? ORDER BY starts_at ASC",
+                )
+                .bind(customer_id)
+                .fetch_all(pool)
+                .await?;
+                rows.into_iter()
+                    .map(|row| {
+                        Ok(EntitlementRecord {
+                            id: row.try_get("id")?,
+                            customer_id: row.try_get("customer_id")?,
+                            product: row.try_get("product")?,
+                            starts_at: row.try_get("starts_at")?,
+                            ends_at: row.try_get("ends_at")?,
+                            metadata: row.try_get("metadata")?,
+                        })
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn insert_entitlement(
+        &self,
+        entitlement: &EntitlementRecord,
+    ) -> Result<(), sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                sqlx::query(
+                    "INSERT INTO entitlements (id, customer_id, product, starts_at, ends_at, metadata) \
+                     VALUES ($1, $2, $3, $4, $5, $6)",
+                )
+                .bind(&entitlement.id)
+                .bind(&entitlement.customer_id)
+                .bind(&entitlement.product)
+                .bind(entitlement.starts_at)
+                .bind(entitlement.ends_at)
+                .bind(&entitlement.metadata)
+                .execute(pool)
+                .await?;
+            }
+            Database::Sqlite(pool) => {
+                sqlx::query(
+                    "INSERT INTO entitlements (id, customer_id, product, starts_at, ends_at, metadata) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&entitlement.id)
+                .bind(&entitlement.customer_id)
+                .bind(&entitlement.product)
+                .bind(entitlement.starts_at)
+                .bind(entitlement.ends_at)
+                .bind(&entitlement.metadata)
                 .execute(pool)
                 .await?;
             }
@@ -309,6 +439,50 @@ impl Database {
         Ok(())
     }
 
+    pub async fn get_artifact(
+        &self,
+        artifact_id: &str,
+    ) -> Result<Option<ArtifactRecord>, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let row = sqlx::query(
+                    "SELECT id, release_id, object_key, checksum, size, platform, created_at \
+                     FROM artifacts WHERE id = $1",
+                )
+                .bind(artifact_id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| ArtifactRecord {
+                    id: row.get("id"),
+                    release_id: row.get("release_id"),
+                    object_key: row.get("object_key"),
+                    checksum: row.get("checksum"),
+                    size: row.get("size"),
+                    platform: row.get("platform"),
+                    created_at: row.get("created_at"),
+                }))
+            }
+            Database::Sqlite(pool) => {
+                let row = sqlx::query(
+                    "SELECT id, release_id, object_key, checksum, size, platform, created_at \
+                     FROM artifacts WHERE id = ?",
+                )
+                .bind(artifact_id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| ArtifactRecord {
+                    id: row.get("id"),
+                    release_id: row.get("release_id"),
+                    object_key: row.get("object_key"),
+                    checksum: row.get("checksum"),
+                    size: row.get("size"),
+                    platform: row.get("platform"),
+                    created_at: row.get("created_at"),
+                }))
+            }
+        }
+    }
+
     pub async fn get_release(
         &self,
         release_id: &str,
@@ -346,6 +520,87 @@ impl Database {
                     status: row.get("status"),
                     created_at: row.get("created_at"),
                     published_at: row.get("published_at"),
+                }))
+            }
+        }
+    }
+
+    pub async fn insert_download_token(
+        &self,
+        token: &DownloadTokenRecord,
+    ) -> Result<(), sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                sqlx::query(
+                    "INSERT INTO download_tokens \
+                     (token_hash, artifact_id, customer_id, purpose, expires_at, created_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6)",
+                )
+                .bind(&token.token_hash)
+                .bind(&token.artifact_id)
+                .bind(&token.customer_id)
+                .bind(&token.purpose)
+                .bind(token.expires_at)
+                .bind(token.created_at)
+                .execute(pool)
+                .await?;
+            }
+            Database::Sqlite(pool) => {
+                sqlx::query(
+                    "INSERT INTO download_tokens \
+                     (token_hash, artifact_id, customer_id, purpose, expires_at, created_at) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&token.token_hash)
+                .bind(&token.artifact_id)
+                .bind(&token.customer_id)
+                .bind(&token.purpose)
+                .bind(token.expires_at)
+                .bind(token.created_at)
+                .execute(pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn get_download_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<DownloadTokenRecord>, sqlx::Error> {
+        match self {
+            Database::Postgres(pool) => {
+                let row = sqlx::query(
+                    "SELECT token_hash, artifact_id, customer_id, purpose, expires_at, created_at \
+                     FROM download_tokens WHERE token_hash = $1",
+                )
+                .bind(token_hash)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| DownloadTokenRecord {
+                    token_hash: row.get("token_hash"),
+                    artifact_id: row.get("artifact_id"),
+                    customer_id: row.get("customer_id"),
+                    purpose: row.get("purpose"),
+                    expires_at: row.get("expires_at"),
+                    created_at: row.get("created_at"),
+                }))
+            }
+            Database::Sqlite(pool) => {
+                let row = sqlx::query(
+                    "SELECT token_hash, artifact_id, customer_id, purpose, expires_at, created_at \
+                     FROM download_tokens WHERE token_hash = ?",
+                )
+                .bind(token_hash)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row.map(|row| DownloadTokenRecord {
+                    token_hash: row.get("token_hash"),
+                    artifact_id: row.get("artifact_id"),
+                    customer_id: row.get("customer_id"),
+                    purpose: row.get("purpose"),
+                    expires_at: row.get("expires_at"),
+                    created_at: row.get("created_at"),
                 }))
             }
         }
@@ -586,6 +841,7 @@ mod tests {
             log_level: "info".to_string(),
             database_url: "sqlite::memory:".to_string(),
             database_max_connections: 1,
+            download_token_ttl_seconds: 600,
             admin_api_key: None,
             api_key_pepper: None,
             operator_jwks_url: None,
