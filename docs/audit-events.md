@@ -63,8 +63,6 @@ policies). Recommended practice:
 
 See `docs/audit-retention.md` for SQL templates.
 
-## Access Model
-
 ## Read API
 
 `GET /v1/admin/audit-events`

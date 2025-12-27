@@ -10,6 +10,11 @@ Entitlement timestamps are Unix seconds. An entitlement is active when
 All endpoints require admin authentication (admin key or operator JWT with the
 appropriate role).
 
+Role requirements:
+
+- List: `platform_admin` or `platform_support`
+- Create/Update/Delete: `platform_admin` only
+
 ## List entitlements
 
 `GET /v1/admin/customers/{customer_id}/entitlements`

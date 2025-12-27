@@ -63,6 +63,12 @@ API keys are hashed with Argon2id using a per-key salt.
 | `RELEASY_OPERATOR_JWKS_TTL_SECONDS`   | no       | `300`   | JWKS cache TTL in seconds                 |
 | `RELEASY_OPERATOR_JWT_LEEWAY_SECONDS` | no       | `0`     | Clock skew tolerance for JWT validation   |
 
+JWKS fetch behavior:
+
+- Request timeout: 8 seconds
+- Retry: 1 retry with 200ms backoff on connection errors or 5xx responses
+- Cache: JWKS is cached for `RELEASY_OPERATOR_JWKS_TTL_SECONDS` (default 300s)
+
 Example for Keycloak:
 
 ```bash

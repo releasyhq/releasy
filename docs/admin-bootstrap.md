@@ -149,3 +149,22 @@ curl -X GET "http://localhost:8080/v1/releases?product=myapp" \
 
 API keys are validated against their scopes, expiration, and revocation
 status on each request.
+
+## API Key Internals
+
+### Usage Tracking
+
+Each successful API key authentication updates the `last_used_at` timestamp
+on the key record. This can be used to identify unused keys for cleanup.
+
+### Hash Migration
+
+API keys are hashed with Argon2id for storage. Keys created with older
+versions (SHA256 hash) are automatically migrated to Argon2id on first
+successful authentication. This migration is transparent and requires no
+operator action.
+
+### Token Format
+
+Generated API keys follow the format `releasy_<base64-encoded-random-bytes>`.
+The `releasy_` prefix allows for easy identification in logs and configs.

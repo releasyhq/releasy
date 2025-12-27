@@ -84,3 +84,23 @@ Download tokens require an active entitlement record for the customer and
 release product. Entitlements are stored in the `entitlements` table and are
 considered active when `starts_at <= now` and `ends_at` is `NULL` or in the
 future.
+
+## Error Responses
+
+### Issue Token Errors
+
+| Status             | Message                 | Cause                                 |
+|--------------------|-------------------------|---------------------------------------|
+| `401 Unauthorized` | `unauthorized`          | Missing or invalid API key            |
+| `403 Forbidden`    | `missing scope`         | API key lacks `downloads:token` scope |
+| `403 Forbidden`    | `release not published` | Release is still in draft status      |
+| `403 Forbidden`    | `entitlement required`  | Customer has no active entitlement    |
+| `404 Not Found`    | `artifact not found`    | Artifact ID does not exist            |
+
+### Resolve Token Errors
+
+| Status          | Message                    | Cause                                 |
+|-----------------|----------------------------|---------------------------------------|
+| `404 Not Found` | `download token not found` | Token invalid or customer suspended   |
+| `404 Not Found` | `download token expired`   | Token TTL exceeded                    |
+| `404 Not Found` | `release not available`    | Release unpublished or no entitlement |
