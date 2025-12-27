@@ -1,0 +1,69 @@
+http:
+  routers:
+    releasy-http:
+      rule: "Host(`{{ releasy_public_host }}`)"
+      entryPoints:
+        - web
+      middlewares:
+        - redirect-to-https
+      service: releasy-server
+    releasy-https:
+      rule: "Host(`{{ releasy_public_host }}`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - rate-limit
+      tls:
+        certResolver: letsencrypt
+      service: releasy-server
+{% if keycloak_public_host | default('') and (keycloak_upstreams | default([]) | length > 0) %}
+    keycloak-http:
+      rule: "Host(`{{ keycloak_public_host }}`)"
+      entryPoints:
+        - web
+      middlewares:
+        - redirect-to-https
+      service: keycloak
+    keycloak-https:
+      rule: "Host(`{{ keycloak_public_host }}`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - rate-limit
+      tls:
+        certResolver: letsencrypt
+      service: keycloak
+{% endif %}
+
+  services:
+    releasy-server:
+      loadBalancer:
+        servers:
+        {% for upstream in releasy_server_upstreams %}
+          - url: "{{ upstream }}"
+        {% endfor %}
+{% if keycloak_public_host | default('') and (keycloak_upstreams | default([]) | length > 0) %}
+    keycloak:
+      loadBalancer:
+{% if keycloak_traefik_sticky | default(false) %}
+        sticky:
+          cookie:
+            name: "{{ keycloak_traefik_sticky_cookie_name | default('KEYCLOAK_STICKY') }}"
+            httpOnly: true
+            secure: true
+{% endif %}
+        servers:
+        {% for upstream in keycloak_upstreams %}
+          - url: "{{ upstream }}"
+        {% endfor %}
+{% endif %}
+
+  middlewares:
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+    rate-limit:
+      rateLimit:
+        average: {{ traefik_rate_limit_average }}
+        burst: {{ traefik_rate_limit_burst }}

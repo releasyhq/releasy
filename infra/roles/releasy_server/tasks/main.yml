@@ -1,4 +1,236 @@
 ---
-- name: Placeholder for releasy_server role
-  ansible.builtin.debug:
-    msg: "TODO: implement Releasy server deployment tasks"
+- name: Assert required variables
+  ansible.builtin.assert:
+    that:
+      - releasy_database_url is defined
+      - releasy_admin_api_key is defined
+      - releasy_server_image is defined
+      - releasy_server_instances is defined
+      - releasy_server_instances | length > 0
+      - releasy_registry is defined
+      - releasy_registry_username is defined
+      - releasy_registry_username | length > 0
+      - releasy_registry_password is defined
+      - releasy_registry_password | length > 0
+    quiet: true
+
+- name: Install system packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - docker.io
+    update_cache: true
+
+- name: Install UFW when firewall is enabled
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+  when: releasy_firewall_enabled
+
+- name: Ensure Docker is enabled and running
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Ensure env directory
+  ansible.builtin.file:
+    path: "{{ releasy_env_dir }}"
+    state: directory
+    owner: "root"
+    group: "root"
+    mode: "0750"
+
+- name: Build extra IP CIDR (optional)
+  ansible.builtin.set_fact:
+    releasy_extra_ip_cidr: >-
+      {{
+        releasy_extra_ip if '/' in releasy_extra_ip
+        else releasy_extra_ip ~ '/32'
+      }}
+  when: releasy_extra_ip is defined and releasy_extra_ip | length > 0
+
+- name: Check extra IP assignment (optional)
+  ansible.builtin.command: "ip -4 addr show dev {{ releasy_extra_ip_iface }}"
+  register: releasy_extra_ip_status
+  changed_when: false
+  when: releasy_extra_ip is defined and releasy_extra_ip | length > 0
+
+- name: Assign extra IP to interface (optional)
+  ansible.builtin.command: >-
+    ip addr add {{ releasy_extra_ip_cidr }} dev {{ releasy_extra_ip_iface }}
+  when:
+    - releasy_extra_ip is defined
+    - releasy_extra_ip | length > 0
+    - releasy_extra_ip_cidr not in releasy_extra_ip_status.stdout
+
+- name: Build backend docker args
+  ansible.builtin.set_fact:
+    releasy_server_docker_extra_args_effective: >-
+      {{
+        (releasy_server_docker_extra_args | default([]))
+        + (['--dns=100.100.100.100'] if (tailscale_enabled | default(false)) else [])
+      }}
+
+- name: Wait for Postgres to be reachable from app host
+  ansible.builtin.wait_for:
+    host: "{{ postgres_host }}"
+    port: "{{ postgres_port | default(5432) }}"
+    timeout: "{{ releasy_db_connect_timeout | default(30) }}"
+    state: started
+
+- name: Log in to container registry
+  ansible.builtin.command: "docker login {{ releasy_registry }} -u {{ releasy_registry_username }} --password-stdin"
+  args:
+    stdin: "{{ releasy_registry_password }}"
+  no_log: true
+
+- name: Pull server image
+  ansible.builtin.command: "docker pull {{ releasy_server_image }}"
+  register: releasy_server_pull
+  changed_when: "'Downloaded newer image' in (releasy_server_pull.stdout | default(''))"
+
+- name: Render server environment file
+  ansible.builtin.template:
+    src: releasy.env.j2
+    dest: "{{ releasy_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  register: releasy_env
+
+- name: Render per-instance environment files
+  ansible.builtin.template:
+    src: releasy.instance.env.j2
+    dest: "{{ releasy_env_dir }}/releasy-{{ item }}.env"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ releasy_server_instances }}"
+  loop_control:
+    index_var: instance_index
+  vars:
+    instance_port: "{{ (releasy_server_instance_port_base | default(releasy_port) | int) + instance_index }}"
+  register: releasy_instance_envs
+  no_log: true
+
+- name: Install server systemd template
+  ansible.builtin.template:
+    src: releasy@.service.j2
+    dest: "/etc/systemd/system/releasy-server@.service"
+    owner: root
+    group: root
+    mode: "0644"
+  register: releasy_unit
+
+- name: Reload systemd when unit changed
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: releasy_unit.changed
+
+- name: Stop legacy releasy-server service if present
+  ansible.builtin.systemd:
+    name: "{{ releasy_service_name | default('releasy-server') }}"
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Ensure server instances are enabled and running
+  ansible.builtin.systemd:
+    name: "releasy-server@{{ item }}"
+    enabled: true
+    state: started
+  loop: "{{ releasy_server_instances }}"
+
+- name: Determine rolling restart requirement
+  ansible.builtin.set_fact:
+    releasy_server_restart_required: >-
+      {{
+        releasy_env.changed
+        or releasy_instance_envs.changed
+        or releasy_unit.changed
+        or (releasy_server_pull is defined and releasy_server_pull.changed)
+      }}
+
+- name: Rolling restart server instances
+  ansible.builtin.include_tasks: rolling_restart.yml
+  when: releasy_server_restart_required | default(false)
+  loop: "{{ releasy_server_instances }}"
+  loop_control:
+    index_var: instance_index
+    loop_var: releasy_server_instance
+
+- name: Default deny incoming (optional)
+  ansible.builtin.command: ufw default deny incoming
+  register: ufw_default_deny
+  when: releasy_firewall_enabled and releasy_firewall_default_deny_incoming
+  changed_when: "'changed' in (ufw_default_deny.stdout | lower)"
+  notify: Show UFW rules
+
+- name: Remove legacy OpenSSH allow rules
+  ansible.builtin.command: ufw delete allow OpenSSH
+  register: ufw_delete_openssh
+  changed_when: "'Skipping' not in ufw_delete_openssh.stdout"
+  failed_when: false
+  when: releasy_firewall_enabled and releasy_firewall_allow_ssh
+  notify: Show UFW rules
+
+- name: Remove legacy SSH deny rules
+  ansible.builtin.command: "ufw delete deny {{ item }}"
+  register: ufw_delete_ssh_denies
+  changed_when: "'Skipping' not in ufw_delete_ssh_denies.stdout"
+  failed_when: false
+  loop:
+    - "22/tcp"
+    - "ssh"
+  when: releasy_firewall_enabled and releasy_firewall_allow_ssh
+  notify: Show UFW rules
+
+- name: Allow SSH from specific sources
+  ansible.builtin.command: "ufw allow from {{ item }} to any port 22 proto tcp"
+  register: ufw_allow_ssh_result
+  changed_when: "'Skipping' not in ufw_allow_ssh_result.stdout"
+  loop: "{{ releasy_firewall_ssh_sources }}"
+  when: releasy_firewall_enabled
+    and releasy_firewall_allow_ssh
+    and (releasy_firewall_ssh_sources | length > 0)
+  notify: Show UFW rules
+
+- name: Allow SSH (fallback)
+  ansible.builtin.command: ufw allow OpenSSH
+  register: ufw_allow_openssh
+  when: releasy_firewall_enabled
+    and releasy_firewall_allow_ssh
+    and (releasy_firewall_ssh_sources | length == 0)
+  changed_when: "'Skipping' not in ufw_allow_openssh.stdout"
+  notify: Show UFW rules
+
+- name: Explicitly deny SSH from other sources
+  ansible.builtin.command: ufw deny 22/tcp
+  register: ufw_deny_ssh
+  when: releasy_firewall_enabled
+    and releasy_firewall_allow_ssh
+    and releasy_firewall_explicit_deny_ssh
+  changed_when: "'Skipping' not in ufw_deny_ssh.stdout"
+  notify: Show UFW rules
+
+- name: Enable UFW if requested
+  ansible.builtin.command: ufw --force enable
+  when: releasy_firewall_enabled and releasy_firewall_enable_ufw
+  changed_when: false
+
+- name: Allow proxy sources to reach server ports
+  ansible.builtin.command: "ufw allow from {{ item.0 }} to any port {{ item.1 }} proto tcp"
+  register: ufw_allow_result
+  changed_when: "'Skipping' not in ufw_allow_result.stdout"
+  loop: >-
+    {{ releasy_firewall_allowed_sources
+       | product(range(releasy_server_instance_port_base | default(releasy_port) | int,
+                       (releasy_server_instance_port_base | default(releasy_port) | int)
+                       + (releasy_server_instances | length)))
+       | list }}
+  when: releasy_firewall_enabled
+    and (releasy_firewall_allowed_sources | length > 0)
+  notify: Show UFW rules

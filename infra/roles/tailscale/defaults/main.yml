@@ -1,0 +1,4 @@
+---
+tailscale_enabled: false
+tailscale_hostname: "{{ inventory_hostname }}"
+tailscale_advertise_tags: []

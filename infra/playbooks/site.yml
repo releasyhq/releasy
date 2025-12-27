@@ -11,6 +11,27 @@
   hosts: releasy_app
   become: true
   serial: 1
+  pre_tasks:
+    - name: Assert postgres_host is set
+      ansible.builtin.assert:
+        that:
+          - postgres_host is defined
+          - postgres_host | length > 0
+        fail_msg: >-
+          postgres_host is empty. Define at least one host in group
+          'releasy_db' with tailscale_hostname/ansible_host, or set
+          postgres_host explicitly.
+        quiet: true
+    - name: Show current UFW status (dry run)
+      ansible.builtin.command: ufw status verbose
+      register: ufw_status_verbose
+      when: releasy_firewall_enabled and releasy_firewall_show_rules_dry_run
+      changed_when: false
+      failed_when: false
+    - name: Print current UFW status (dry run)
+      ansible.builtin.debug:
+        var: ufw_status_verbose.stdout_lines
+      when: releasy_firewall_enabled and releasy_firewall_show_rules_dry_run
   roles:
     - role: tailscale
       when: tailscale_enabled | default(false)
@@ -20,6 +41,18 @@
   hosts: keycloak
   become: true
   serial: 1
+  pre_tasks:
+    - name: Assert postgres_host is set for Keycloak
+      ansible.builtin.assert:
+        that:
+          - postgres_host is defined
+          - postgres_host | length > 0
+        fail_msg: >-
+          postgres_host is empty. Define at least one host in group
+          'releasy_db' with tailscale_hostname/ansible_host, or set
+          postgres_host explicitly.
+        quiet: true
+      when: keycloak_enabled | default(false)
   roles:
     - role: tailscale
       when: tailscale_enabled | default(false)

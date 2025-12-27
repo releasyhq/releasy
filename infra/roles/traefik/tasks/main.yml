@@ -1,4 +1,119 @@
 ---
-- name: Placeholder for traefik role
-  ansible.builtin.debug:
-    msg: "TODO: implement Traefik provisioning tasks"
+- name: Assert required variables
+  ansible.builtin.assert:
+    that:
+      - releasy_public_host is defined
+      - traefik_acme_email is defined
+    quiet: true
+
+- name: Install system packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - libcap2-bin
+    update_cache: true
+
+- name: Ensure traefik group
+  ansible.builtin.group:
+    name: traefik
+    system: true
+
+- name: Ensure traefik user
+  ansible.builtin.user:
+    name: traefik
+    group: traefik
+    home: /var/lib/traefik
+    create_home: true
+    system: true
+    shell: /usr/sbin/nologin
+
+- name: Ensure traefik directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "/etc/traefik", owner: "root", group: "root", mode: "0755" }
+    - { path: "/etc/traefik/dynamic", owner: "root", group: "root", mode: "0755" }
+    - { path: "/var/lib/traefik", owner: "traefik", group: "traefik", mode: "0750" }
+
+- name: Download Traefik
+  ansible.builtin.get_url:
+    url: "https://github.com/traefik/traefik/releases/download/v{{ traefik_version }}/traefik_v{{ traefik_version }}_linux_{{ traefik_arch }}.tar.gz"
+    dest: "/tmp/traefik_{{ traefik_version }}.tar.gz"
+    mode: "0644"
+
+- name: Ensure Traefik extract directory
+  ansible.builtin.file:
+    path: "/tmp/traefik_{{ traefik_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Extract Traefik
+  ansible.builtin.unarchive:
+    src: "/tmp/traefik_{{ traefik_version }}.tar.gz"
+    dest: "/tmp/traefik_{{ traefik_version }}"
+    remote_src: true
+    creates: "/tmp/traefik_{{ traefik_version }}/traefik"
+
+- name: Install Traefik binary
+  ansible.builtin.copy:
+    src: "/tmp/traefik_{{ traefik_version }}/traefik"
+    dest: /usr/local/bin/traefik
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+  notify: Restart traefik
+
+- name: Allow Traefik to bind low ports
+  ansible.builtin.command: setcap 'cap_net_bind_service=+ep' /usr/local/bin/traefik
+  changed_when: false
+
+- name: Ensure ACME storage exists
+  ansible.builtin.file:
+    path: /var/lib/traefik/acme.json
+    state: touch
+    owner: traefik
+    group: traefik
+    mode: "0600"
+
+- name: Render Traefik static config
+  ansible.builtin.template:
+    src: traefik.yml.j2
+    dest: /etc/traefik/traefik.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart traefik
+
+- name: Render Traefik dynamic config
+  ansible.builtin.template:
+    src: dynamic.yml.j2
+    dest: /etc/traefik/dynamic/releasy.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart traefik
+
+- name: Install systemd service
+  ansible.builtin.template:
+    src: traefik.service.j2
+    dest: /etc/systemd/system/traefik.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart traefik
+
+- name: Ensure Traefik is enabled and running
+  ansible.builtin.systemd:
+    name: traefik
+    enabled: true
+    state: started

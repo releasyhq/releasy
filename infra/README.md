@@ -99,11 +99,11 @@ all:
     releasy_db:
       hosts:
         releasy:
-          ansible_host: 10.0.1.10
+          ansible_host: 10.0.2.10
     traefik:
       hosts:
         releasy:
-          ansible_host: 10.0.1.10
+          ansible_host: 10.0.3.10
 ```
 
 Run:

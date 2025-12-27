@@ -1,4 +1,160 @@
 ---
-- name: Placeholder for keycloak role
-  ansible.builtin.debug:
-    msg: "TODO: implement Keycloak provisioning tasks"
+- name: Assert required variables
+  ansible.builtin.assert:
+    that:
+      - keycloak_admin_user is defined
+      - keycloak_admin_password is defined
+      - keycloak_db_password is defined
+      - keycloak_hostname is defined
+      - keycloak_db_host is defined
+      - keycloak_db_name is defined
+      - keycloak_db_user is defined
+      - keycloak_instances is defined
+      - keycloak_instances | length > 0
+    quiet: true
+
+- name: Install Docker
+  ansible.builtin.apt:
+    name:
+      - docker.io
+    state: present
+    update_cache: true
+
+- name: Ensure Docker is enabled and running
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Ensure Keycloak directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ keycloak_data_dir }}"
+    - "{{ keycloak_env_dir }}"
+
+- name: Ensure Keycloak import directory
+  ansible.builtin.file:
+    path: "{{ keycloak_data_dir }}/import"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: keycloak_realm_import_enabled | default(false)
+
+- name: Assert realm import source exists
+  ansible.builtin.stat:
+    path: "{{ keycloak_realm_import_src }}"
+  register: keycloak_realm_import_stat
+  delegate_to: localhost
+  run_once: true
+  when: keycloak_realm_import_enabled | default(false)
+    and keycloak_realm_import_source == "file"
+
+- name: Assert realm import source present
+  ansible.builtin.assert:
+    that:
+      - keycloak_realm_import_src | length > 0
+      - keycloak_realm_import_stat.stat.exists
+    fail_msg: "keycloak_realm_import_src must point to a readable realm file."
+    quiet: true
+  when: keycloak_realm_import_enabled | default(false)
+    and keycloak_realm_import_source == "file"
+
+- name: Render Keycloak realm import template
+  ansible.builtin.template:
+    src: realm.json.j2
+    dest: "{{ keycloak_data_dir }}/import/{{ keycloak_realm_import_dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: keycloak_realm_import_enabled | default(false)
+    and keycloak_realm_import_source == "template"
+  register: keycloak_realm_template
+
+- name: Copy Keycloak realm import file
+  ansible.builtin.copy:
+    src: "{{ keycloak_realm_import_src }}"
+    dest: "{{ keycloak_data_dir }}/import/{{ keycloak_realm_import_dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: keycloak_realm_import_enabled | default(false)
+    and keycloak_realm_import_source == "file"
+  register: keycloak_realm_copy
+
+- name: Render Keycloak environment file
+  ansible.builtin.template:
+    src: keycloak.env.j2
+    dest: "{{ keycloak_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  register: keycloak_env
+
+- name: Render per-instance environment files
+  ansible.builtin.template:
+    src: keycloak.instance.env.j2
+    dest: "{{ keycloak_env_dir }}/keycloak-{{ item }}.env"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ keycloak_instances }}"
+  loop_control:
+    index_var: instance_index
+  vars:
+    instance_port: "{{ (keycloak_instance_port_base | default(keycloak_http_port | default(8080)) | int) + instance_index }}"
+  no_log: true
+  register: keycloak_instance_envs
+
+- name: Install Keycloak systemd template
+  ansible.builtin.template:
+    src: keycloak@.service.j2
+    dest: /etc/systemd/system/keycloak@.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: keycloak_unit
+
+- name: Reload systemd when unit changed
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: keycloak_unit.changed
+
+- name: Stop legacy keycloak service if present
+  ansible.builtin.systemd:
+    name: keycloak
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Ensure Keycloak instances are enabled and running
+  ansible.builtin.systemd:
+    name: "keycloak@{{ item }}"
+    enabled: true
+    state: started
+  loop: "{{ keycloak_instances }}"
+
+- name: Determine rolling restart requirement
+  ansible.builtin.set_fact:
+    keycloak_restart_required: >-
+      {{
+        keycloak_env.changed
+        or keycloak_instance_envs.changed
+        or keycloak_unit.changed
+        or (keycloak_realm_template is defined and keycloak_realm_template.changed)
+        or (keycloak_realm_copy is defined and keycloak_realm_copy.changed)
+      }}
+
+- name: Rolling restart Keycloak instances
+  ansible.builtin.include_tasks: rolling_restart.yml
+  when: keycloak_restart_required | default(false)
+  loop: "{{ keycloak_instances }}"
+  loop_control:
+    index_var: instance_index
+    loop_var: keycloak_instance

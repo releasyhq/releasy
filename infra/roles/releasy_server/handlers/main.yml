@@ -1,0 +1,9 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Show UFW rules
+  ansible.builtin.command: ufw status numbered
+  when: releasy_firewall_show_rules
+  changed_when: false

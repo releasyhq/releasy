@@ -1,0 +1,215 @@
+name: Build and push releasy-server image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  schedule:
+    - cron: "0 2 * * *"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      push_images:
+        description: "Push images to GHCR (true/false)"
+        required: false
+        default: "true"
+      release_tag:
+        description: "Tag to release (e.g. v1.2.3); empty skips release"
+        required: false
+        default: ""
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine push behavior
+        id: push
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "push=${{ inputs.push_images }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GHCR
+        if: steps.push.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Compute nightly tags
+        id: nightly
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "extra_tags<<EOF"
+            echo "ghcr.io/${GITHUB_REPOSITORY}:nightly"
+            echo "ghcr.io/${GITHUB_REPOSITORY}:nightly-$(date -u +%Y%m%d)"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build (no push)
+        if: steps.push.outputs.push != 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          build-args: |
+            RELEASY_VERSION=${{ github.ref_name }}
+            RELEASY_BUILD=${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=releasy-server
+
+      - name: Build and push
+        if: steps.push.outputs.push == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            RELEASY_VERSION=${{ github.ref_name }}
+            RELEASY_BUILD=${{ github.sha }}
+          tags: |
+            ${{ steps.meta.outputs.tags }}
+            ${{ steps.nightly.outputs.extra_tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=releasy-server
+          cache-to: type=gha,scope=releasy-server,mode=max
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            current_tag="${{ inputs.release_tag }}"
+            if [ -z "$current_tag" ]; then
+              echo "release_tag is required for manual releases" >&2
+              exit 1
+            fi
+            git fetch --tags --force
+            git checkout "refs/tags/${current_tag}"
+          else
+            current_tag="${GITHUB_REF#refs/tags/}"
+          fi
+          current_sha="$(git rev-parse HEAD)"
+          prev_tag="$(git describe --tags --abbrev=0 "${current_tag}^" 2>/dev/null || true)"
+          if [ -n "$prev_tag" ]; then
+            range="${prev_tag}..${current_tag}"
+            echo "Changes since ${prev_tag}" > RELEASE_NOTES.md
+          else
+            range="${current_tag}"
+            echo "Changes in ${current_tag}" > RELEASE_NOTES.md
+          fi
+          echo "" >> RELEASE_NOTES.md
+          declare -A sections
+          add_item() {
+            local key="$1"
+            local line="$2"
+            if [ -n "${sections[$key]+x}" ]; then
+              sections["$key"]="${sections[$key]}"$'\n'"$line"
+            else
+              sections["$key"]="$line"
+            fi
+          }
+          while IFS='|' read -r subject hash; do
+            type="other"
+            title="$subject"
+            if [[ "$subject" =~ ^([a-zA-Z]+)(\([^)]+\))?(!)?:\ (.+)$ ]]; then
+              type="${BASH_REMATCH[1]}"
+              scope="${BASH_REMATCH[2]}"
+              breaking="${BASH_REMATCH[3]}"
+              message="${BASH_REMATCH[4]}"
+              if [ -n "$scope" ]; then
+                scope="${scope:1:${#scope}-2}"
+                title="${scope}: ${message}"
+              else
+                title="${message}"
+              fi
+              if [ -n "$breaking" ]; then
+                title="BREAKING: ${title}"
+              fi
+            fi
+            case "$type" in
+              feat) section="Features" ;;
+              fix) section="Fixes" ;;
+              perf) section="Performance" ;;
+              refactor) section="Refactoring" ;;
+              docs) section="Documentation" ;;
+              test) section="Tests" ;;
+              chore|build|ci) section="Chores" ;;
+              style) section="Style" ;;
+              revert) section="Reverts" ;;
+              *) section="Other" ;;
+            esac
+            add_item "$section" "- ${title} (${hash})"
+          done < <(git log --no-merges --pretty=format:'%s|%h' "$range")
+
+          for section in "Features" "Fixes" "Performance" "Refactoring" \
+            "Documentation" "Tests" "Chores" "Style" "Reverts" "Other"; do
+            if [ -n "${sections[$section]+x}" ]; then
+              echo "### ${section}" >> RELEASE_NOTES.md
+              echo "${sections[$section]}" >> RELEASE_NOTES.md
+              echo "" >> RELEASE_NOTES.md
+            fi
+          done
+
+          echo "Images" >> RELEASE_NOTES.md
+          echo "- ghcr.io/${GITHUB_REPOSITORY}:${current_tag}" >> RELEASE_NOTES.md
+          echo "- ghcr.io/${GITHUB_REPOSITORY}:sha-${current_sha}" >> RELEASE_NOTES.md
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ inputs.release_tag || github.ref_name }}
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          body_path: RELEASE_NOTES.md

@@ -1,0 +1,27 @@
+[Unit]
+Description=Keycloak (%i) (Docker)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+EnvironmentFile={{ keycloak_env_file }}
+EnvironmentFile={{ keycloak_env_dir }}/keycloak-%i.env
+ExecStartPre=-/usr/bin/docker rm -f {{ keycloak_container_name_prefix }}-%i
+ExecStartPre=/usr/bin/docker pull {{ keycloak_image }}
+ExecStart=/usr/bin/docker run --rm \
+  --name {{ keycloak_container_name_prefix }}-%i \
+  --env-file {{ keycloak_env_file }} \
+  --env-file {{ keycloak_env_dir }}/keycloak-%i.env \
+  -p ${KEYCLOAK_HTTP_PORT}:8080 \
+{% if keycloak_docker_extra_args | default([]) | length > 0 %}
+  {{ keycloak_docker_extra_args | join(' ') }} \
+{% endif %}
+  {{ keycloak_image }} start{% if keycloak_realm_import_enabled | default(false) %} --import-realm{% endif %}{% if keycloak_start_args | length > 0 %} {{ keycloak_start_args | join(' ') }}{% endif %}
+ExecStop=/usr/bin/docker stop {{ keycloak_container_name_prefix }}-%i
+
+[Install]
+WantedBy=multi-user.target

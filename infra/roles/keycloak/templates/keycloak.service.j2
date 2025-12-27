@@ -1,0 +1,23 @@
+[Unit]
+Description=Keycloak (Docker)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+EnvironmentFile={{ keycloak_env_file }}
+ExecStartPre=-/usr/bin/docker rm -f {{ keycloak_container_name }}
+ExecStartPre=/usr/bin/docker pull {{ keycloak_image }}
+ExecStart=/usr/bin/docker run --rm \
+  --name {{ keycloak_container_name }} \
+  --env-file {{ keycloak_env_file }} \
+  -p {{ keycloak_http_port }}:8080 \
+  -v {{ keycloak_data_dir }}:/opt/keycloak/data \
+  {{ keycloak_image }} start{% if keycloak_realm_import_enabled | default(false) %} --import-realm{% endif %}{% if keycloak_start_args | length > 0 %} {{ keycloak_start_args | join(' ') }}{% endif %}
+ExecStop=/usr/bin/docker stop {{ keycloak_container_name }}
+
+[Install]
+WantedBy=multi-user.target

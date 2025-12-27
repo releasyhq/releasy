@@ -1,0 +1,7 @@
+**
+
+!Dockerfile
+!Cargo.toml
+!Cargo.lock
+!crates/**
+!migrations/**

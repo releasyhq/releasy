@@ -1,7 +1,23 @@
-# Shared defaults for all hosts.
-releasy_server_image: "ghcr.io/releasyhq/releasy-server:latest"
-releasy_server_instances:
-  - blue
-  - green
-releasy_registry: "ghcr.io"
-releasy_bind_addr: "0.0.0.0:8080"
+# Non-secret shared defaults. Secrets live in inventory/group_vars/all/vault.yml.
+
+# Database discovery for app + Keycloak.
+releasy_db_primary_host: "{{ groups.get('releasy_db', []) | first | default('', true) }}"
+postgres_host_auto: >-
+  {{
+    (
+      hostvars[releasy_db_primary_host].tailscale_dns_name
+      | default(
+        hostvars[releasy_db_primary_host].tailscale_hostname
+        | default(
+          hostvars[releasy_db_primary_host].ansible_host
+          | default(releasy_db_primary_host)
+        ),
+        true
+      )
+    )
+    if releasy_db_primary_host else ''
+  }}
+postgres_host: "{{ postgres_host_auto }}"
+postgres_port: 5432
+postgres_app_db: "releasy"
+postgres_app_user: "releasy"

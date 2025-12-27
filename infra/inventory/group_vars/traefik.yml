@@ -1,4 +1,57 @@
-# Traefik routing settings.
-traefik_public_host: "api.example.com"
-traefik_upstreams:
-  - "http://127.0.0.1:8080"
+# Traefik host settings.
+
+traefik_version: "3.1.6"
+traefik_arch: "amd64"
+traefik_log_level: "INFO"
+traefik_acme_email: "ops@example.com"
+traefik_rate_limit_average: 1
+traefik_rate_limit_burst: 30
+
+# Sticky sessions for Keycloak (recommended for HA).
+keycloak_traefik_sticky: true
+keycloak_traefik_sticky_cookie_name: "KEYCLOAK_STICKY"
+
+releasy_public_host: "api.example.com"
+keycloak_public_host: ""
+
+releasy_app_primary_host: "{{ groups.get('releasy_app', []) | first | default('', true) }}"
+releasy_server_instance_port_base: >-
+  {{ hostvars[releasy_app_primary_host].releasy_server_instance_port_base
+     | default(8080) if releasy_app_primary_host else 8080 }}
+releasy_server_instances: >-
+  {{ hostvars[releasy_app_primary_host].releasy_server_instances
+     | default(['blue', 'green']) if releasy_app_primary_host else ['blue', 'green'] }}
+
+# Backend upstreams Traefik forwards to. Use private IPs for multi-host.
+releasy_server_upstreams: >-
+  {{ range(releasy_server_instance_port_base | int,
+           releasy_server_instance_port_base | int
+           + (releasy_server_instances | length))
+     | map('string')
+     | map('regex_replace', '^', 'http://127.0.0.1:')
+     | list }}
+# Example for multi-host:
+# releasy_server_upstreams:
+#   - "http://10.0.1.10:8080"
+#   - "http://10.0.1.10:8081"
+
+keycloak_primary_host: "{{ groups.get('keycloak', []) | first | default('', true) }}"
+keycloak_instance_port_base: >-
+  {{ hostvars[keycloak_primary_host].keycloak_instance_port_base
+     | default(8080) if keycloak_primary_host else 8080 }}
+keycloak_instances: >-
+  {{ hostvars[keycloak_primary_host].keycloak_instances
+     | default(['a', 'b']) if keycloak_primary_host else ['a', 'b'] }}
+
+# Keycloak upstreams Traefik forwards to. Use private IPs for multi-host.
+keycloak_upstreams: >-
+  {{ range(keycloak_instance_port_base | int,
+           keycloak_instance_port_base | int
+           + (keycloak_instances | length))
+     | map('string')
+     | map('regex_replace', '^', 'http://127.0.0.1:')
+     | list }}
+# Example for multi-host:
+# keycloak_upstreams:
+#   - "http://10.0.1.40:8080"
+#   - "http://10.0.1.40:8081"

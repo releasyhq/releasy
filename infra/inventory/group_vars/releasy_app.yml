@@ -1,6 +1,66 @@
 # Releasy application host settings.
-releasy_server_port: 8080
-releasy_server_env_dir: "/etc/releasy"
+
+# Service
+releasy_service_name: "releasy-server"
+releasy_env_dir: "/etc/releasy"
+releasy_env_file: "/etc/releasy/releasy.env"
+
+# Docker + instances
+releasy_port: 8080
+releasy_container_port: "{{ releasy_port }}"
+releasy_server_instance_port_base: "{{ releasy_port }}"
+releasy_server_instances:
+  - blue
+  - green
+releasy_server_image: "ghcr.io/releasyhq/releasy-server:latest"
+releasy_server_container_name_prefix: "releasy-server"
+releasy_server_healthcheck_path: "/v1/health"
+releasy_server_healthcheck_timeout: 60
+releasy_server_healthcheck_retries: 10
+releasy_server_healthcheck_delay: 2
+releasy_server_docker_extra_args: []
+releasy_registry: "ghcr.io"
+
+# Artifact storage (optional)
+releasy_artifact_endpoint: ""
+releasy_artifact_region: ""
+releasy_artifact_bucket: ""
+releasy_artifact_path_style: false
+releasy_artifact_presign_expires_seconds: 900
+
+releasy_download_token_ttl_seconds: 600
+releasy_log_level: "info"
+releasy_database_max_connections: 5
+releasy_database_url: "postgres://{{ postgres_app_user | urlencode }}:{{ postgres_app_password | urlencode }}@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_app_db }}"
+
+# Bind address (inside container)
+releasy_bind_addr: "0.0.0.0:{{ releasy_container_port | default(releasy_port) }}"
+
+# Optional operator JWT settings (set to empty string to disable)
+releasy_operator_jwks_url: ""
+releasy_operator_issuer: ""
+releasy_operator_audience: ""
+releasy_operator_resource: ""
+releasy_operator_jwks_ttl_seconds: 300
+releasy_operator_jwt_leeway_seconds: 0
+
+# Tailscale (optional)
+tailscale_enabled: true
+tailscale_hostname: "releasy"
+
+# Optional firewall defaults (app host). Keep disabled by default.
 releasy_firewall_enabled: false
-releasy_firewall_ssh_sources: []
-releasy_healthcheck_path: "/v1/health"
+releasy_firewall_enable_ufw: false
+releasy_firewall_default_deny_incoming: false
+releasy_firewall_allow_ssh: true
+releasy_firewall_explicit_deny_ssh: true
+releasy_firewall_show_rules: true
+releasy_firewall_show_rules_dry_run: true
+releasy_firewall_ssh_sources:
+  - "100.64.0.0/10"
+  - "fd7a:115c:a1e0::/48"
+releasy_firewall_allowed_sources: []
+
+# Optional extra IP assignment (app host)
+releasy_extra_ip: ""
+releasy_extra_ip_iface: "eth0"

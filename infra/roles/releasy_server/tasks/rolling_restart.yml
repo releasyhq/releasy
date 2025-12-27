@@ -1,0 +1,22 @@
+---
+- name: Restart server instance
+  ansible.builtin.systemd:
+    name: "releasy-server@{{ releasy_server_instance }}"
+    state: restarted
+
+- name: Wait for server port
+  ansible.builtin.wait_for:
+    host: "127.0.0.1"
+    port: "{{ (releasy_server_instance_port_base | default(releasy_port) | int) + instance_index }}"
+    delay: 2
+    timeout: "{{ releasy_server_healthcheck_timeout | default(60) }}"
+
+- name: Check server health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ (releasy_server_instance_port_base | default(releasy_port) | int) + instance_index }}{{ releasy_server_healthcheck_path | default('/v1/health') }}"
+    status_code: 200
+    timeout: 5
+  register: releasy_server_healthcheck
+  retries: "{{ releasy_server_healthcheck_retries | default(10) }}"
+  delay: "{{ releasy_server_healthcheck_delay | default(2) }}"
+  until: releasy_server_healthcheck.status == 200
