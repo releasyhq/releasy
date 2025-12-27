@@ -1,12 +1,14 @@
 use axum::Router;
 use axum::routing::post;
 
+use crate::auth::JwksCache;
 use crate::handlers::{admin_create_customer, admin_create_key, admin_revoke_key, auth_introspect};
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: crate::db::Database,
     pub settings: crate::config::Settings,
+    pub jwks_cache: Option<JwksCache>,
 }
 
 pub fn router(state: AppState) -> Router {

@@ -1,8 +1,16 @@
 use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use jsonwebtoken::jwk::JwkSet;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use rand::TryRngCore;
 use rand::rngs::OsRng;
+use reqwest::Client;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 use tracing::error;
 
 use crate::{
@@ -16,6 +24,77 @@ pub struct ApiKeyAuth {
     pub key_type: String,
     pub scopes: Vec<String>,
     pub expires_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminRole {
+    PlatformAdmin,
+    PlatformSupport,
+    ReleasePublisher,
+}
+
+#[derive(Clone)]
+pub struct JwksCache {
+    jwks_url: String,
+    ttl: Duration,
+    client: Client,
+    state: Arc<RwLock<Option<JwksState>>>,
+}
+
+#[derive(Clone)]
+struct JwksState {
+    fetched_at: Instant,
+    jwks: JwkSet,
+}
+
+impl JwksCache {
+    pub fn new(settings: &Settings) -> Option<Self> {
+        let jwks_url = settings.operator_jwks_url.clone()?;
+        let ttl = Duration::from_secs(settings.operator_jwks_ttl_seconds as u64);
+        Some(Self {
+            jwks_url,
+            ttl,
+            client: Client::new(),
+            state: Arc::new(RwLock::new(None)),
+        })
+    }
+
+    async fn get_jwks(&self) -> Result<JwkSet, ApiError> {
+        let now = Instant::now();
+        if let Some(cached) = self.state.read().await.clone()
+            && now.duration_since(cached.fetched_at) <= self.ttl
+        {
+            return Ok(cached.jwks);
+        }
+
+        let jwks = self.fetch_jwks().await?;
+        let mut guard = self.state.write().await;
+        *guard = Some(JwksState {
+            fetched_at: now,
+            jwks: jwks.clone(),
+        });
+        Ok(jwks)
+    }
+
+    async fn fetch_jwks(&self) -> Result<JwkSet, ApiError> {
+        let response = self
+            .client
+            .get(&self.jwks_url)
+            .send()
+            .await
+            .map_err(|err| {
+                error!("failed to fetch jwks: {err}");
+                ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "operator jwks unavailable")
+            })?;
+        let response = response.error_for_status().map_err(|err| {
+            error!("jwks returned error status: {err}");
+            ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "operator jwks unavailable")
+        })?;
+        response.json::<JwkSet>().await.map_err(|err| {
+            error!("failed to parse jwks: {err}");
+            ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "operator jwks unavailable")
+        })
+    }
 }
 
 pub async fn authenticate_api_key(
@@ -103,6 +182,50 @@ pub fn admin_authorize(headers: &HeaderMap, settings: &Settings) -> Result<(), A
     }
 }
 
+pub async fn admin_authorize_with_role(
+    headers: &HeaderMap,
+    settings: &Settings,
+    jwks_cache: &Option<JwksCache>,
+) -> Result<AdminRole, ApiError> {
+    if let Some(token) = bearer_token(headers)
+        && looks_like_jwt(&token)
+    {
+        let jwks_cache = jwks_cache.as_ref().ok_or_else(|| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "operator jwks not configured",
+            )
+        })?;
+        return authorize_operator_jwt(&token, settings, jwks_cache).await;
+    }
+
+    admin_authorize(headers, settings)?;
+    Ok(AdminRole::PlatformAdmin)
+}
+
+pub fn require_admin(role: AdminRole) -> Result<(), ApiError> {
+    if role == AdminRole::PlatformAdmin {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden("admin role required"))
+    }
+}
+
+pub fn require_support_or_admin(role: AdminRole) -> Result<(), ApiError> {
+    match role {
+        AdminRole::PlatformAdmin | AdminRole::PlatformSupport => Ok(()),
+        _ => Err(ApiError::forbidden("platform_support role required")),
+    }
+}
+
+#[allow(dead_code)]
+pub fn require_release_publisher(role: AdminRole) -> Result<(), ApiError> {
+    match role {
+        AdminRole::PlatformAdmin | AdminRole::ReleasePublisher => Ok(()),
+        _ => Err(ApiError::forbidden("release_publisher role required")),
+    }
+}
+
 pub fn require_scopes(auth: &ApiKeyAuth, required: &[&str]) -> Result<(), ApiError> {
     for scope in required {
         if !auth.scopes.iter().any(|entry| entry == scope) {
@@ -149,7 +272,9 @@ fn api_key_from_headers(headers: &HeaderMap) -> Option<String> {
 }
 
 fn admin_key_from_headers(headers: &HeaderMap) -> Option<String> {
-    if let Some(bearer) = bearer_token(headers) {
+    if let Some(bearer) = bearer_token(headers)
+        && !looks_like_jwt(&bearer)
+    {
         return Some(bearer);
     }
     headers
@@ -166,6 +291,10 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
         .and_then(|value| value.strip_prefix("Bearer "))
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn looks_like_jwt(token: &str) -> bool {
+    token.matches('.').count() == 2
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,6 +337,112 @@ fn parse_scopes(scopes: &str) -> Result<Vec<String>, ApiError> {
     Ok(parsed)
 }
 
+async fn authorize_operator_jwt(
+    token: &str,
+    settings: &Settings,
+    jwks_cache: &JwksCache,
+) -> Result<AdminRole, ApiError> {
+    let header = decode_header(token).map_err(|err| {
+        error!("jwt header decode failed: {err}");
+        ApiError::unauthorized()
+    })?;
+    let kid = header.kid.ok_or_else(ApiError::unauthorized)?;
+    let jwks = jwks_cache.get_jwks().await?;
+    let jwk = jwks.find(&kid).ok_or_else(ApiError::unauthorized)?;
+    let key = DecodingKey::from_jwk(jwk).map_err(|err| {
+        error!("jwt jwk decode failed: {err}");
+        ApiError::unauthorized()
+    })?;
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.leeway = settings.operator_jwt_leeway_seconds as u64;
+    validation.validate_exp = true;
+    validation.validate_nbf = true;
+    let token_data = decode::<Value>(token, &key, &validation).map_err(|err| {
+        error!("jwt decode failed: {err}");
+        ApiError::unauthorized()
+    })?;
+
+    let claims = token_data.claims;
+    if let Some(expected) = settings.operator_issuer.as_deref() {
+        let issuer = claims
+            .get("iss")
+            .and_then(|value| value.as_str())
+            .ok_or_else(ApiError::unauthorized)?;
+        if issuer != expected {
+            return Err(ApiError::unauthorized());
+        }
+    }
+
+    if let Some(expected) = settings.operator_audience.as_deref()
+        && !audience_matches(&claims, expected)
+    {
+        return Err(ApiError::unauthorized());
+    }
+
+    let roles = extract_roles(&claims, settings.operator_resource.as_deref());
+    let role = admin_role_from_roles(&roles)
+        .ok_or_else(|| ApiError::forbidden("missing operator role"))?;
+    Ok(role)
+}
+
+fn audience_matches(claims: &Value, expected: &str) -> bool {
+    match claims.get("aud") {
+        Some(Value::String(value)) => value == expected,
+        Some(Value::Array(values)) => values.iter().any(|entry| entry.as_str() == Some(expected)),
+        _ => false,
+    }
+}
+
+fn extract_roles(claims: &Value, resource: Option<&str>) -> HashSet<String> {
+    let mut roles = HashSet::new();
+    collect_roles(&mut roles, claims.get("roles"));
+    collect_roles(
+        &mut roles,
+        claims
+            .get("realm_access")
+            .and_then(|value| value.get("roles")),
+    );
+    if let Some(resource) = resource {
+        collect_roles(
+            &mut roles,
+            claims
+                .get("resource_access")
+                .and_then(|value| value.get(resource))
+                .and_then(|value| value.get("roles")),
+        );
+    }
+    roles
+}
+
+fn collect_roles(target: &mut HashSet<String>, value: Option<&Value>) {
+    match value {
+        Some(Value::String(role)) => {
+            target.insert(role.to_string());
+        }
+        Some(Value::Array(roles)) => {
+            for entry in roles {
+                if let Some(role) = entry.as_str() {
+                    target.insert(role.to_string());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn admin_role_from_roles(roles: &HashSet<String>) -> Option<AdminRole> {
+    if roles.contains("platform_admin") {
+        Some(AdminRole::PlatformAdmin)
+    } else if roles.contains("platform_support") {
+        Some(AdminRole::PlatformSupport)
+    } else if roles.contains("release_publisher") {
+        Some(AdminRole::ReleasePublisher)
+    } else {
+        None
+    }
+}
+
 async fn record_api_key_audit(
     db: &Database,
     customer_id: Option<&str>,
@@ -234,6 +469,24 @@ mod tests {
     use super::*;
     use crate::config::Settings;
     use axum::http::HeaderMap;
+    use serde_json::json;
+
+    fn test_settings() -> Settings {
+        Settings {
+            bind_addr: "127.0.0.1:8080".to_string(),
+            log_level: "info".to_string(),
+            database_url: "sqlite::memory:".to_string(),
+            database_max_connections: 1,
+            admin_api_key: Some("secret".to_string()),
+            api_key_pepper: None,
+            operator_jwks_url: None,
+            operator_issuer: None,
+            operator_audience: None,
+            operator_resource: None,
+            operator_jwks_ttl_seconds: 300,
+            operator_jwt_leeway_seconds: 0,
+        }
+    }
 
     #[test]
     fn hash_api_key_changes_with_pepper() {
@@ -275,14 +528,7 @@ mod tests {
 
     #[test]
     fn admin_authorize_accepts_header() {
-        let settings = Settings {
-            bind_addr: "127.0.0.1:8080".to_string(),
-            log_level: "info".to_string(),
-            database_url: "sqlite::memory:".to_string(),
-            database_max_connections: 1,
-            admin_api_key: Some("secret".to_string()),
-            api_key_pepper: None,
-        };
+        let settings = test_settings();
         let mut headers = HeaderMap::new();
         headers.insert("x-releasy-admin-key", "secret".parse().unwrap());
         assert!(admin_authorize(&headers, &settings).is_ok());
@@ -290,15 +536,54 @@ mod tests {
 
     #[test]
     fn admin_authorize_rejects_missing_key() {
-        let settings = Settings {
-            bind_addr: "127.0.0.1:8080".to_string(),
-            log_level: "info".to_string(),
-            database_url: "sqlite::memory:".to_string(),
-            database_max_connections: 1,
-            admin_api_key: Some("secret".to_string()),
-            api_key_pepper: None,
-        };
+        let settings = test_settings();
         let headers = HeaderMap::new();
         assert!(admin_authorize(&headers, &settings).is_err());
+    }
+
+    #[test]
+    fn extract_roles_collects_multiple_sources() {
+        let claims = json!({
+            "roles": ["release_publisher"],
+            "realm_access": { "roles": ["platform_support"] },
+            "resource_access": {
+                "releasy": { "roles": ["platform_admin"] }
+            }
+        });
+        let roles = extract_roles(&claims, Some("releasy"));
+        assert!(roles.contains("release_publisher"));
+        assert!(roles.contains("platform_support"));
+        assert!(roles.contains("platform_admin"));
+    }
+
+    #[test]
+    fn extract_roles_returns_empty_without_roles() {
+        let claims = json!({ "sub": "operator" });
+        let roles = extract_roles(&claims, Some("releasy"));
+        assert!(roles.is_empty());
+    }
+
+    #[test]
+    fn admin_role_from_roles_prefers_admin() {
+        let roles = HashSet::from([
+            "release_publisher".to_string(),
+            "platform_admin".to_string(),
+        ]);
+        assert_eq!(
+            admin_role_from_roles(&roles),
+            Some(AdminRole::PlatformAdmin)
+        );
+    }
+
+    #[test]
+    fn admin_role_from_roles_rejects_unknown() {
+        let roles = HashSet::from(["other".to_string()]);
+        assert_eq!(admin_role_from_roles(&roles), None);
+    }
+
+    #[test]
+    fn looks_like_jwt_detects_format() {
+        assert!(looks_like_jwt("a.b.c"));
+        assert!(!looks_like_jwt("not-a-jwt"));
     }
 }

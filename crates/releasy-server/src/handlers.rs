@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::auth::{
-    admin_authorize, api_key_prefix, authenticate_api_key, generate_api_key, hash_api_key,
-    require_scopes,
+    admin_authorize_with_role, api_key_prefix, authenticate_api_key, generate_api_key,
+    hash_api_key, require_admin, require_scopes, require_support_or_admin,
 };
 use crate::errors::ApiError;
 use crate::models::{
@@ -64,7 +64,8 @@ pub async fn admin_create_customer(
     headers: HeaderMap,
     Json(payload): Json<AdminCreateCustomerRequest>,
 ) -> Result<Json<AdminCreateCustomerResponse>, ApiError> {
-    admin_authorize(&headers, &state.settings)?;
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_admin(role)?;
 
     let name = payload.name.trim();
     if name.is_empty() {
@@ -103,7 +104,8 @@ pub async fn admin_create_key(
     headers: HeaderMap,
     Json(payload): Json<AdminCreateKeyRequest>,
 ) -> Result<Json<AdminCreateKeyResponse>, ApiError> {
-    admin_authorize(&headers, &state.settings)?;
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_admin(role)?;
 
     let customer_id = payload.customer_id.trim();
     if customer_id.is_empty() {
@@ -173,7 +175,8 @@ pub async fn admin_revoke_key(
     headers: HeaderMap,
     Json(payload): Json<AdminRevokeKeyRequest>,
 ) -> Result<Json<AdminRevokeKeyResponse>, ApiError> {
-    admin_authorize(&headers, &state.settings)?;
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_support_or_admin(role)?;
 
     let key_id = payload.api_key_id.trim();
     if key_id.is_empty() {

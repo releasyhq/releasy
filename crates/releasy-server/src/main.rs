@@ -25,7 +25,12 @@ async fn main() -> Result<(), String> {
     let db = Database::connect(&settings).await?;
     db.migrate().await?;
 
-    let state = app::AppState { db, settings };
+    let jwks_cache = auth::JwksCache::new(&settings);
+    let state = app::AppState {
+        db,
+        settings,
+        jwks_cache,
+    };
     let app = app::router(state);
 
     tracing::info!("releasy-server listening on {addr}");
