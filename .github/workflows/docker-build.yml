@@ -41,7 +41,9 @@ on:
         required: false
         default: ""
 
-permissions: inherit
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build:

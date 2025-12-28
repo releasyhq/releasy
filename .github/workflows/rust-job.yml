@@ -31,7 +31,8 @@ on:
         required: false
         default: "error"
 
-permissions: inherit
+permissions:
+  contents: read
 
 jobs:
   run:
