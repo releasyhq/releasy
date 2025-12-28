@@ -1,0 +1,2 @@
+UPDATE releases
+SET status =

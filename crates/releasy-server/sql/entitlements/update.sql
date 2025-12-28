@@ -1,0 +1,2 @@
+UPDATE entitlements
+SET product =
