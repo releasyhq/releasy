@@ -1,0 +1,68 @@
+name: Rust Task (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      command:
+        type: string
+        required: true
+      toolchain:
+        type: string
+        required: false
+        default: "stable"
+      components:
+        type: string
+        required: false
+        default: ""
+      cache_key_prefix:
+        type: string
+        required: false
+        default: "cargo"
+      artifact_name:
+        type: string
+        required: false
+        default: ""
+      artifact_path:
+        type: string
+        required: false
+        default: ""
+      artifact_if_no_files_found:
+        type: string
+        required: false
+        default: "error"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ inputs.toolchain }}
+          components: ${{ inputs.components }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ inputs.cache_key_prefix }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ inputs.cache_key_prefix }}-
+
+      - name: Run
+        shell: bash
+        run: ${{ inputs.command }}
+
+      - name: Upload artifact
+        if: inputs.artifact_name != '' && inputs.artifact_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.artifact_path }}
+          if-no-files-found: ${{ inputs.artifact_if_no_files_found }}

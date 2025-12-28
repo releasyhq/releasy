@@ -1,0 +1,303 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: "prep: release"
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      checkout_ref: ${{ steps.resolve.outputs.checkout_ref }}
+      tags: ${{ steps.resolve.outputs.tags }}
+      mode: ${{ steps.resolve.outputs.mode }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      release_name: ${{ steps.resolve.outputs.release_name }}
+      nightly_date: ${{ steps.resolve.outputs.nightly_date }}
+    steps:
+      - name: Resolve release target
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${{ github.ref }}"
+          mode=""
+          tag=""
+          checkout_ref=""
+          tags=""
+          release_name=""
+          prerelease="false"
+          nightly_date="$(date -u +%Y%m%d)"
+          nightly_display="$(date -u +%Y-%m-%d)"
+
+          if [[ "$ref" == refs/tags/* ]]; then
+            mode="tag"
+            tag="${ref#refs/tags/}"
+            if [ -z "$tag" ]; then
+              echo "tag ref is required" >&2
+              exit 1
+            fi
+            if [[ "$tag" != v* ]]; then
+              echo "tag must start with v (e.g. v1.2.3)" >&2
+              exit 1
+            fi
+            checkout_ref="$tag"
+            tags=$(cat <<EOF
+          type=raw,value=${tag}
+          type=sha,prefix=sha-
+          type=raw,value=latest,enable={{is_default_branch}}
+          EOF
+          )
+            release_name="$tag"
+          else
+            mode="nightly"
+            tag="nightly"
+            checkout_ref="${{ github.sha }}"
+            tags=$(cat <<EOF
+          type=raw,value=nightly
+          type=sha,prefix=sha-
+          EOF
+          )
+            release_name="Nightly ${nightly_display} (${GITHUB_RUN_NUMBER})"
+            prerelease="true"
+          fi
+          {
+            echo "mode=$mode"
+            echo "tag=$tag"
+            echo "checkout_ref=$checkout_ref"
+            echo "tags<<EOF"
+            echo "$tags"
+            echo "EOF"
+            echo "release_name=$release_name"
+            echo "prerelease=$prerelease"
+            echo "nightly_date=$nightly_date"
+          } >> "$GITHUB_OUTPUT"
+
+  build-image:
+    name: "build: image"
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      push_images: true
+      version: ${{ needs.prepare.outputs.tag }}
+      tags: ${{ needs.prepare.outputs.tags }}
+      checkout_ref: ${{ needs.prepare.outputs.checkout_ref }}
+
+  build-assets:
+    name: "build: assets"
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_os: linux
+            binary: releasy-server
+            archive: tar.gz
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.checkout_ref }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p releasy-server --bin releasy-server --release --locked
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -czf "dist/releasy-server-${{ matrix.asset_os }}-x86_64.${{ matrix.archive }}" \
+            -C target/release "${{ matrix.binary }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: releasy-server-${{ matrix.asset_os }}
+          path: dist/releasy-server-${{ matrix.asset_os }}-x86_64.${{ matrix.archive }}
+
+  release-github:
+    name: "release: github"
+    if: needs.prepare.outputs.tag != ''
+    needs: [ prepare, build-image, build-assets ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.checkout_ref }}
+
+      - name: Capture previous nightly tag
+        id: nightly
+        if: needs.prepare.outputs.mode == 'nightly'
+        shell: bash
+        run: |
+          set -euo pipefail
+          prev=""
+          if git rev-parse -q --verify refs/tags/nightly >/dev/null; then
+            prev="$(git rev-parse refs/tags/nightly)"
+          fi
+          echo "prev_sha=$prev" >> "$GITHUB_OUTPUT"
+
+      - name: Update nightly tag
+        if: needs.prepare.outputs.mode == 'nightly'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f nightly "${{ needs.prepare.outputs.checkout_ref }}"
+          git push origin -f refs/tags/nightly
+
+      - name: Generate release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mode="${{ needs.prepare.outputs.mode }}"
+          current_tag="${{ needs.prepare.outputs.tag }}"
+          nightly_date="${{ needs.prepare.outputs.nightly_date }}"
+          current_sha="$(git rev-parse HEAD)"
+
+          if [ "$mode" = "nightly" ]; then
+            echo "Nightly build (${nightly_date})" > RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            prev_sha="${{ steps.nightly.outputs.prev_sha }}"
+            if [ -n "$prev_sha" ]; then
+              echo "Changes since previous nightly" >> RELEASE_NOTES.md
+              echo "" >> RELEASE_NOTES.md
+              git log --no-merges --pretty=format:'- %s (%h)' "${prev_sha}..${current_sha}" >> RELEASE_NOTES.md
+            else
+              echo "Recent changes" >> RELEASE_NOTES.md
+              echo "" >> RELEASE_NOTES.md
+              git log --no-merges -n 50 --pretty=format:'- %s (%h)' >> RELEASE_NOTES.md
+            fi
+          else
+            if [ -z "$current_tag" ]; then
+              echo "release tag is required" >&2
+              exit 1
+            fi
+            subject_regex='^([a-zA-Z]+)(\([^)]+\))?(!)?: (.+)$'
+            prev_tag="$(git describe --tags --match 'v*' --abbrev=0 "${current_tag}^" 2>/dev/null || true)"
+            if [ -n "$prev_tag" ]; then
+              range="${prev_tag}..${current_tag}"
+              echo "Changes since ${prev_tag}" > RELEASE_NOTES.md
+            else
+              range="${current_tag}"
+              echo "Changes in ${current_tag}" > RELEASE_NOTES.md
+            fi
+            echo "" >> RELEASE_NOTES.md
+            declare -A sections
+            add_item() {
+              local key="$1"
+              local line="$2"
+              if [ -n "${sections[$key]+x}" ]; then
+                sections["$key"]="${sections[$key]}"$'\n'"$line"
+              else
+                sections["$key"]="$line"
+              fi
+            }
+            while IFS='|' read -r subject hash; do
+              type="other"
+              title="$subject"
+              if [[ "$subject" =~ $subject_regex ]]; then
+                type="${BASH_REMATCH[1]}"
+                scope="${BASH_REMATCH[2]}"
+                breaking="${BASH_REMATCH[3]}"
+                message="${BASH_REMATCH[4]}"
+                if [ -n "$scope" ]; then
+                  scope="${scope:1:${#scope}-2}"
+                  title="${scope}: ${message}"
+                else
+                  title="${message}"
+                fi
+                if [ -n "$breaking" ]; then
+                  title="BREAKING: ${title}"
+                fi
+              fi
+              case "$type" in
+                feat) section="Features" ;;
+                fix) section="Fixes" ;;
+                perf) section="Performance" ;;
+                refactor) section="Refactoring" ;;
+                docs) section="Documentation" ;;
+                test) section="Tests" ;;
+                chore|build|ci) section="Chores" ;;
+                style) section="Style" ;;
+                revert) section="Reverts" ;;
+                *) section="Other" ;;
+              esac
+              add_item "$section" "- ${title} (${hash})"
+            done < <(git log --no-merges --pretty=format:'%s|%h' "$range")
+
+            for section in "Features" "Fixes" "Performance" "Refactoring" \
+              "Documentation" "Tests" "Chores" "Style" "Reverts" "Other"; do
+              if [ -n "${sections[$section]+x}" ]; then
+                echo "### ${section}" >> RELEASE_NOTES.md
+                echo "${sections[$section]}" >> RELEASE_NOTES.md
+                echo "" >> RELEASE_NOTES.md
+              fi
+            done
+          fi
+
+          echo "" >> RELEASE_NOTES.md
+          echo "Images" >> RELEASE_NOTES.md
+          echo "- ghcr.io/${GITHUB_REPOSITORY}:${current_tag}" >> RELEASE_NOTES.md
+          echo "- ghcr.io/${GITHUB_REPOSITORY}:sha-${current_sha}" >> RELEASE_NOTES.md
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ needs.prepare.outputs.release_name }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          target_commitish: ${{ needs.prepare.outputs.checkout_ref }}
+          body_path: RELEASE_NOTES.md
+          files: dist/**/*

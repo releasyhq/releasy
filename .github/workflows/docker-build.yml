@@ -1,0 +1,172 @@
+name: Docker Build (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        type: string
+        required: false
+        default: ""
+      context:
+        type: string
+        required: false
+        default: ""
+      dockerfile:
+        type: string
+        required: false
+        default: ""
+      cache_scope:
+        type: string
+        required: false
+        default: ""
+      push_images:
+        type: boolean
+        required: true
+      version:
+        type: string
+        required: true
+      tags:
+        type: string
+        required: true
+      extra_tags:
+        type: string
+        required: false
+        default: ""
+      extra_build_args:
+        type: string
+        required: false
+        default: ""
+      checkout_ref:
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        if: inputs.checkout_ref == ''
+        uses: actions/checkout@v4
+
+      - name: Checkout (ref)
+        if: inputs.checkout_ref != ''
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.checkout_ref }}
+
+      - name: Resolve build sha
+        id: build-sha
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Docker inputs
+        id: docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_name="${{ inputs.image_name }}"
+          if [ -z "$image_name" ]; then
+            image_name="${{ vars.DOCKER_IMAGE }}"
+          fi
+          if [ -z "$image_name" ]; then
+            image_name="ghcr.io/${GITHUB_REPOSITORY}"
+          fi
+
+          context="${{ inputs.context }}"
+          if [ -z "$context" ]; then
+            context="${{ vars.DOCKER_CONTEXT }}"
+          fi
+          if [ -z "$context" ]; then
+            context="."
+          fi
+
+          dockerfile="${{ inputs.dockerfile }}"
+          if [ -z "$dockerfile" ]; then
+            dockerfile="${{ vars.DOCKERFILE }}"
+          fi
+          if [ -z "$dockerfile" ]; then
+            dockerfile="./Dockerfile"
+          fi
+
+          cache_scope="${{ inputs.cache_scope }}"
+          if [ -z "$cache_scope" ]; then
+            cache_scope="${{ vars.DOCKER_CACHE_SCOPE }}"
+          fi
+          if [ -z "$cache_scope" ]; then
+            cache_scope="releasy-server"
+          fi
+
+          extra_build_args="${{ inputs.extra_build_args }}"
+          if [ -z "$extra_build_args" ]; then
+            extra_build_args="${{ vars.DOCKER_EXTRA_BUILD_ARGS }}"
+          fi
+
+          {
+            echo "image_name=$image_name"
+            echo "context=$context"
+            echo "dockerfile=$dockerfile"
+            echo "cache_scope=$cache_scope"
+            echo "extra_build_args<<EOF"
+            echo "$extra_build_args"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: inputs.push_images
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.docker.outputs.image_name }}
+          tags: ${{ inputs.tags }}
+
+      - name: Build (no push)
+        if: inputs.push_images != true
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ steps.docker.outputs.context }}
+          file: ${{ steps.docker.outputs.dockerfile }}
+          push: false
+          build-args: |
+            RELEASY_VERSION=${{ inputs.version }}
+            RELEASY_BUILD=${{ steps.build-sha.outputs.sha }}
+            ${{ steps.docker.outputs.extra_build_args }}
+          tags: |
+            ${{ steps.meta.outputs.tags }}
+            ${{ inputs.extra_tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ steps.docker.outputs.cache_scope }}
+
+      - name: Build and push
+        if: inputs.push_images
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ steps.docker.outputs.context }}
+          file: ${{ steps.docker.outputs.dockerfile }}
+          push: true
+          build-args: |
+            RELEASY_VERSION=${{ inputs.version }}
+            RELEASY_BUILD=${{ steps.build-sha.outputs.sha }}
+            ${{ steps.docker.outputs.extra_build_args }}
+          tags: |
+            ${{ steps.meta.outputs.tags }}
+            ${{ inputs.extra_tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ steps.docker.outputs.cache_scope }}
+          cache-to: type=gha,scope=${{ steps.docker.outputs.cache_scope }},mode=max
