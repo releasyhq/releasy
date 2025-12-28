@@ -31,6 +31,8 @@ on:
         required: false
         default: "error"
 
+permissions: inherit
+
 jobs:
   run:
     runs-on: ubuntu-latest
