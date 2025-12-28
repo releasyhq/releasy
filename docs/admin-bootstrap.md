@@ -9,11 +9,15 @@ This key is required for admin endpoints and is not meant for customer use.
 
 1) Generate a random key (example):
 
+   ```bash
    openssl rand -hex 32
+   ```
 
 2) Export it before starting the server:
 
+   ```bash
    export RELEASY_ADMIN_API_KEY="<your-random-key>"
+   ```
 
 ## Create the First Customer
 

@@ -8,7 +8,6 @@ selected driver is determined by the scheme of `RELEASY_DATABASE_URL`.
 Set `RELEASY_DATABASE_URL` using one of the supported schemes:
 
 - PostgreSQL: `postgres://user:pass@host:5432/dbname`
-- PostgreSQL (alt): `postgresql://user:pass@host:5432/dbname`
 - SQLite (file): `sqlite://relative/path.db` or `sqlite:///absolute/path.db`
 - SQLite (memory): `sqlite::memory:` (dev/tests only)
 

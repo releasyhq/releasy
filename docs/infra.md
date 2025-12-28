@@ -1,6 +1,8 @@
 # Ansible Deployment (Releasy Core)
 
-This folder documents the standard Ansible layout for self-hosted Releasy.
+This folder documents the standard Ansible layout for self-hosted
+Releasy Core. It follows the standard self-hosted deployment layout and
+is adapted for Releasy naming.
 
 ## Layout
 
