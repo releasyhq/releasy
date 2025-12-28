@@ -7,7 +7,7 @@
       when: tailscale_enabled | default(false)
     - role: releasy_postgres
 
-- name: Provision Releasy Core
+- name: Provision Releasy
   hosts: releasy_app
   become: true
   serial: 1

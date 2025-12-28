@@ -1,6 +1,21 @@
+---
+title: API Conventions
+description: Understand Releasy API conventions including error responses, idempotency keys, and pagination parameters for consistent API integration.
+head:
+  - - meta
+    - name: keywords
+      content: Releasy API, error handling, idempotency, pagination, REST API conventions
+  - - meta
+    - property: og:title
+      content: API Conventions - Releasy
+  - - meta
+    - property: og:description
+      content: Error handling, idempotency, and pagination conventions for the Releasy API.
+---
+
 # API Conventions
 
-This document describes shared API behavior across endpoints.
+All endpoints follow these API conventions.
 
 ## Error schema
 

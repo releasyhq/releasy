@@ -1,6 +1,21 @@
-# Audit Events (Core)
+---
+title: Audit Events
+description: Security audit logging in Releasy including event schema, API key authentication tracking, and the audit events API.
+head:
+  - - meta
+    - name: keywords
+      content: audit logging, security events, compliance, API key tracking, audit trail, security monitoring
+  - - meta
+    - property: og:title
+      content: Audit Events - Releasy
+  - - meta
+    - property: og:description
+      content: Security audit logging and API key authentication tracking.
+---
 
-Core stores security-relevant audit data locally in the primary database. The
+# Audit Events
+
+Releasy stores security-relevant audit data locally in the primary database. The
 current implementation focuses on API key authentication events and is intended
 for self-hosted operators to inspect when debugging access issues.
 
@@ -17,23 +32,23 @@ Audit events are stored in the `audit_events` table:
 
 ## Event Catalog
 
-Core currently emits a single event family for API key authentication.
+Releasy currently emits a single event family for API key authentication.
 
 ### api_key.auth
 
 - `actor`: `api_key`
 - `event`: `api_key.auth`
 - `payload` (JSON):
-    - `outcome`: `accept` or `reject`
-    - `reason`:
-        - `ok`
-        - `missing_header`
-        - `not_found`
-        - `revoked`
-        - `expired`
-        - `invalid_scopes`
-        - `time_unavailable`
-    - `api_key_id`: nullable string (when known)
+  - `outcome`: `accept` or `reject`
+  - `reason`:
+    - `ok`
+    - `missing_header`
+    - `not_found`
+    - `revoked`
+    - `expired`
+    - `invalid_scopes`
+    - `time_unavailable`
+  - `api_key_id`: nullable string (when known)
 
 Example payload:
 
@@ -54,7 +69,7 @@ Notes:
 
 ## Retention
 
-Core does not enforce retention or automatic cleanup. Operators control data
+Releasy does not enforce retention or automatic cleanup. Operators control data
 lifecycle using database tooling (manual SQL, scheduled jobs, or retention
 policies). Recommended practice:
 

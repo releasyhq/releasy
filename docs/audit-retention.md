@@ -1,3 +1,18 @@
+---
+title: Audit Retention and Cleanup
+description: SQL templates for pruning audit events in Releasy for PostgreSQL and SQLite databases.
+head:
+  - - meta
+    - name: keywords
+      content: audit retention, data cleanup, PostgreSQL maintenance, SQLite cleanup, compliance retention
+  - - meta
+    - property: og:title
+      content: Audit Retention and Cleanup - Releasy
+  - - meta
+    - property: og:description
+      content: SQL templates for pruning audit events in PostgreSQL and SQLite.
+---
+
 # Audit Retention Helper
 
 This guide provides SQL templates to prune audit events. Adjust the retention

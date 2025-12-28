@@ -1,3 +1,18 @@
+---
+title: Deployment Patterns
+description: Self-hosted deployment patterns for Releasy including single-host and split topologies, network requirements, and rollout strategies.
+head:
+  - - meta
+    - name: keywords
+      content: self-hosted deployment, Docker deployment, reverse proxy, blue-green deployment, rolling updates
+  - - meta
+    - property: og:title
+      content: Deployment Patterns - Releasy
+  - - meta
+    - property: og:description
+      content: Self-hosted deployment topologies and rollout strategies for Releasy.
+---
+
 # Deployment Patterns
 
 Releasy is designed to run behind a reverse proxy with a database. This
@@ -11,7 +26,7 @@ and rollout strategies for self-hosted deployments.
 All components live on one host. This is suitable for local evaluation
 or small single-node installs.
 
-```
+```text
 Internet
    |
 [Reverse Proxy]
@@ -30,7 +45,7 @@ Notes:
 Separate hosts for proxy, app, and database. This supports scaling the
 app tier independently and keeps the database isolated.
 
-```
+```text
 Internet
    |
 [Reverse Proxy]
@@ -51,16 +66,16 @@ Secure defaults:
 Recommended flows:
 
 - Ingress (public):
-    - 80/443 to reverse proxy
+  - 80/443 to reverse proxy
 - Ingress (admin):
-    - 22 (or your SSH port) from trusted admin networks
+  - 22 (or your SSH port) from trusted admin networks
 - Internal:
-    - Reverse proxy -> Releasy server on `RELEASY_BIND_ADDR`
-      (default `0.0.0.0:8080`)
-    - Releasy server -> Postgres on 5432
+  - Reverse proxy -> Releasy server on `RELEASY_BIND_ADDR`
+    (default `0.0.0.0:8080`)
+  - Releasy server -> Postgres on 5432
 - Egress:
-    - Releasy server -> object storage endpoints (if configured)
-    - Releasy server -> operator JWKS URL (if configured)
+  - Releasy server -> object storage endpoints (if configured)
+  - Releasy server -> operator JWKS URL (if configured)
 
 If you use SQLite, ensure the database file is on local disk and backed
 up like any other persistent data.

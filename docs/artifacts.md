@@ -1,4 +1,19 @@
-# Artifacts & Presigned Uploads
+---
+title: Artifacts and Presigned Uploads
+description: Learn how to upload and register artifacts in Releasy using presigned S3 URLs for secure, direct-to-storage uploads.
+head:
+  - - meta
+    - name: keywords
+      content: artifact upload, presigned URL, S3 upload, file distribution, binary hosting, release artifacts
+  - - meta
+    - property: og:title
+      content: Artifacts and Presigned Uploads - Releasy
+  - - meta
+    - property: og:description
+      content: Upload and register release artifacts using presigned S3 URLs.
+---
+
+# Artifacts and Presigned Uploads
 
 Releasy supports presigned uploads to S3-compatible storage and
 registering artifacts against a release.
@@ -16,7 +31,7 @@ See [operator-auth.md](operator-auth.md) for authentication details.
 
 Set artifact storage settings via environment variables:
 
-```
+```bash
 RELEASY_ARTIFACT_BUCKET=releasy-artifacts
 RELEASY_ARTIFACT_REGION=us-east-1
 RELEASY_ARTIFACT_ENDPOINT=https://s3.example.com
@@ -30,7 +45,7 @@ RELEASY_ARTIFACT_PRESIGN_EXPIRES_SECONDS=900
 
 Object keys are generated as:
 
-```
+```text
 releases/{product}/{version}/{platform}/{artifact_id}/{filename}
 ```
 
@@ -41,7 +56,7 @@ characters (except `.`, `-`, `_`) are replaced with `_`.
 
 Request a presigned PUT URL:
 
-```
+```http
 POST /v1/releases/{release_id}/artifacts/presign
 ```
 
@@ -83,7 +98,7 @@ curl -X POST \
 
 After uploading, register the artifact with its metadata:
 
-```
+```http
 POST /v1/releases/{release_id}/artifacts
 ```
 

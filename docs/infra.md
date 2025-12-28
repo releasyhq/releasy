@@ -1,14 +1,27 @@
-# Ansible Deployment (Releasy Core)
+---
+title: Ansible Infrastructure Deployment
+description: Ansible playbook layout, roles, and runbook for deploying Releasy with PostgreSQL, Traefik, and optional Keycloak.
+head:
+  - - meta
+    - name: keywords
+      content: Ansible deployment, infrastructure automation, Traefik setup, Keycloak integration, self-hosted infrastructure
+  - - meta
+    - property: og:title
+      content: Ansible Infrastructure Deployment - Releasy
+  - - meta
+    - property: og:description
+      content: Ansible playbooks and roles for deploying Releasy infrastructure.
+---
 
-This folder documents the standard Ansible layout for self-hosted
-Releasy Core. It follows the standard self-hosted deployment layout and
-is adapted for Releasy naming.
+# Ansible Deployment
+
+This section documents the Ansible layout for self-hosted Releasy.
 
 ## Layout
 
 Expected structure for the Ansible repo subtree:
 
-```
+```text
 infra/
   playbooks/
     site.yml
@@ -119,15 +132,19 @@ ansible-playbook playbooks/site.yml \
 ## Runbook
 
 - Dry run:
+
   ```bash
   ansible-playbook playbooks/site.yml --check --diff \
     --vault-password-file ~/.secure/releasy-vault-pass
   ```
+
 - Deploy one component:
+
   ```bash
   ansible-playbook playbooks/site.yml --limit releasy_app \
     --vault-password-file ~/.secure/releasy-vault-pass
   ```
+
 - Rolling update (multi-host): keep `serial: 1` and update hosts one by
   one. For blue/green, update `releasy_server_instances` and adjust the
   proxy upstream list.

@@ -1,3 +1,18 @@
+---
+title: Secure Downloads
+description: Issue and resolve time-limited download tokens for secure artifact distribution to authorized customers in Releasy.
+head:
+  - - meta
+    - name: keywords
+      content: download tokens, secure downloads, artifact distribution, presigned URLs, time-limited access
+  - - meta
+    - property: og:title
+      content: Secure Downloads - Releasy
+  - - meta
+    - property: og:description
+      content: Time-limited download tokens for secure artifact distribution.
+---
+
 # Secure Downloads
 
 Releasy issues short-lived download tokens and resolves them to presigned GET
@@ -7,7 +22,7 @@ URLs. Tokens are stored hashed and are tied to a customer, artifact, and TTL.
 
 Set the maximum TTL (seconds) for download tokens:
 
-```
+```bash
 RELEASY_DOWNLOAD_TOKEN_TTL_SECONDS=600
 ```
 
@@ -16,7 +31,7 @@ Downloads also require artifact storage to be configured (see
 
 ## Issue a Download Token
 
-```
+```http
 POST /v1/downloads/token
 ```
 
@@ -65,7 +80,7 @@ curl -X POST \
 
 ## Resolve a Download Token
 
-```
+```http
 GET /v1/downloads/{token}
 ```
 

@@ -1,4 +1,19 @@
-# Operator JWT & RBAC
+---
+title: Operator Authentication and RBAC
+description: Configure JWT/JWKS authentication for operators and understand role-based access control (RBAC) in Releasy.
+head:
+  - - meta
+    - name: keywords
+      content: JWT authentication, JWKS, RBAC, role-based access, operator auth, Keycloak integration
+  - - meta
+    - property: og:title
+      content: Operator Authentication and RBAC - Releasy
+  - - meta
+    - property: og:description
+      content: JWT/JWKS authentication and role-based access control for operators.
+---
+
+# Operator JWT and RBAC
 
 Releasy supports operator authentication using JWTs verified via JWKS.
 When enabled, operator tokens authorize admin endpoints with role-based
@@ -29,19 +44,19 @@ and only the admin bootstrap key is accepted for admin endpoints.
 
 Send operator JWTs as Bearer tokens:
 
-```
+```http
 Authorization: Bearer <operator-jwt>
 ```
 
 Admin bootstrap keys can be sent via header or as non-JWT Bearer token:
 
-```
+```http
 x-releasy-admin-key: <admin-key>
 ```
 
 or:
 
-```
+```http
 Authorization: Bearer <admin-key>
 ```
 

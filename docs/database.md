@@ -1,3 +1,18 @@
+---
+title: Database Support
+description: PostgreSQL and SQLite database configuration for Releasy including connection URLs, migrations, and operational guidance.
+head:
+  - - meta
+    - name: keywords
+      content: PostgreSQL setup, SQLite configuration, database migrations, SQLx, connection pooling
+  - - meta
+    - property: og:title
+      content: Database Support - Releasy
+  - - meta
+    - property: og:description
+      content: PostgreSQL and SQLite database configuration and migrations.
+---
+
 # Database Support
 
 Releasy officially supports PostgreSQL and SQLite through SQLx. The

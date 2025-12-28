@@ -1,3 +1,18 @@
+---
+title: Admin Bootstrap Guide
+description: Learn how to configure the admin bootstrap key, create customers, generate API keys, and manage access in Releasy.
+head:
+  - - meta
+    - name: keywords
+      content: Releasy admin setup, API key management, customer creation, admin bootstrap, initial configuration
+  - - meta
+    - property: og:title
+      content: Admin Bootstrap Guide - Releasy
+  - - meta
+    - property: og:description
+      content: Configure admin access, create customers, and generate API keys in Releasy.
+---
+
 # Admin Bootstrap
 
 ## Purpose
@@ -83,7 +98,6 @@ Available scopes:
 - `downloads:token` - Generate download tokens
 - `keys:read` - Introspect API keys
 - `keys:write` - Manage API keys
-- `audit:read` - Read audit logs
 
 Example:
 

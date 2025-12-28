@@ -16,10 +16,16 @@ Releasy is an API-first platform to manage:
 
 ## Documentation
 
+**Getting Started:**
+
+- [Getting Started](docs/getting-started.md) – Set up Releasy and create your first release
 - [Configuration](docs/configuration.md) – Environment variables reference
 - [Deployment](docs/deployment.md) – Self-hosted topologies and rollouts
 - [Database](docs/database.md) – Postgres/SQLite support and migrations
 - [Ansible Deployment](infra/README.md) – Playbook layout and runbook
+
+**API Reference:**
+
 - [API Conventions](docs/api-conventions.md) – Error schema, idempotency, pagination
 - [Admin Bootstrap](docs/admin-bootstrap.md) – Initial setup and API key management
 - [Operator Auth](docs/operator-auth.md) – JWT/JWKS authentication and RBAC

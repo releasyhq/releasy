@@ -1,3 +1,18 @@
+---
+title: Entitlements API
+description: Manage customer product entitlements in Releasy with time-based validity, custom metadata, and flexible licensing controls.
+head:
+  - - meta
+    - name: keywords
+      content: entitlements API, customer licensing, product access control, subscription management, B2B licensing
+  - - meta
+    - property: og:title
+      content: Entitlements API - Releasy
+  - - meta
+    - property: og:description
+      content: Manage customer product entitlements with time-based validity and metadata.
+---
+
 # Entitlements
 
 Entitlements control which release products a customer can see and download.

@@ -1,3 +1,18 @@
+---
+title: Release API Reference
+description: Complete API reference for managing software releases in Releasy, including create, list, publish, unpublish, and delete operations.
+head:
+  - - meta
+    - name: keywords
+      content: Release API, software versioning, release management, publish release, draft release, REST API
+  - - meta
+    - property: og:title
+      content: Release API Reference - Releasy
+  - - meta
+    - property: og:description
+      content: API endpoints for creating, publishing, and managing software releases.
+---
+
 # Release API
 
 The Release API manages release lifecycle entries (draft -> published) and
@@ -8,11 +23,11 @@ supports filtering/pagination for operators.
 Release endpoints accept either an operator JWT or the admin bootstrap key.
 
 - Operator JWT (preferred):
-    - Header: `Authorization: Bearer <jwt>`
-    - Roles: `platform_admin`, `platform_support`, `release_publisher`
+  - Header: `Authorization: Bearer <jwt>`
+  - Roles: `platform_admin`, `platform_support`, `release_publisher`
 - Admin key (bootstrap):
-    - Header: `x-releasy-admin-key: <admin_key>`
-    - Or `Authorization: Bearer <admin_key>` (non-JWT value)
+  - Header: `x-releasy-admin-key: <admin_key>`
+  - Or `Authorization: Bearer <admin_key>` (non-JWT value)
 
 Role requirements:
 

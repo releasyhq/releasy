@@ -1,3 +1,18 @@
+---
+title: API Key Introspection
+description: Introspect API keys to retrieve metadata including scopes, expiration, and key type in Releasy.
+head:
+  - - meta
+    - name: keywords
+      content: API key introspection, key metadata, scope validation, token inspection
+  - - meta
+    - property: og:title
+      content: API Key Introspection - Releasy
+  - - meta
+    - property: og:description
+      content: Retrieve API key metadata including scopes and expiration.
+---
+
 # API Key Introspection
 
 The introspection endpoint allows API key holders to inspect their own
@@ -7,7 +22,7 @@ key metadata, including scopes and expiration.
 
 This endpoint requires a customer API key with the `keys:read` scope:
 
-```
+```http
 x-releasy-api-key: <api-key>
 ```
 

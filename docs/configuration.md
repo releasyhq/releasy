@@ -1,3 +1,18 @@
+---
+title: Configuration Reference
+description: Complete reference for all Releasy environment variables including server settings, database connection, authentication, S3 artifact storage, and download token configuration.
+head:
+  - - meta
+    - name: keywords
+      content: Releasy configuration, environment variables, database setup, S3 storage, JWT authentication, API configuration
+  - - meta
+    - property: og:title
+      content: Releasy Configuration Reference
+  - - meta
+    - property: og:description
+      content: Complete reference for all Releasy environment variables.
+---
+
 # Configuration
 
 Releasy is configured via environment variables. This document lists all
