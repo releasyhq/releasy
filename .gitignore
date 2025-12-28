@@ -4,3 +4,5 @@
 **/*.rs.bk
 **/*.swp
 .DS_Store
+node_modules
+
