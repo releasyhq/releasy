@@ -105,6 +105,18 @@ releasy_artifact_bucket_object_lock_default_retention:
 If you only want versioning without object lock, set
 `releasy_artifact_bucket_versioning_enabled: true`.
 
+Example for Hetzner Object Storage (S3-compatible, replace the endpoint
+with the value shown in your Hetzner console):
+
+```yaml
+releasy_artifact_bucket_create_enabled: true
+releasy_artifact_endpoint: "https://<region>.your-objectstorage.example"
+releasy_artifact_region: "<region>"
+releasy_artifact_bucket: "releasy-artifacts"
+releasy_artifact_access_key: "<access-key>"
+releasy_artifact_secret_key: "<secret-key>"
+```
+
 If you enable bucket provisioning, install the required Ansible
 collection on the control node:
 
