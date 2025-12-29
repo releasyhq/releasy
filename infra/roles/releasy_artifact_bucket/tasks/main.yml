@@ -15,14 +15,55 @@
   delegate_to: localhost
   become: false
 
+- name: Assert object lock retention settings
+  ansible.builtin.assert:
+    that:
+      - releasy_artifact_bucket_object_lock_enabled | default(false)
+      - releasy_artifact_bucket_object_lock_default_retention.mode is defined
+      - releasy_artifact_bucket_object_lock_default_retention.mode | length > 0
+      - releasy_artifact_bucket_object_lock_default_retention.days is defined
+        or releasy_artifact_bucket_object_lock_default_retention.years is defined
+    fail_msg: >-
+      releasy_artifact_bucket_object_lock_default_retention requires
+      releasy_artifact_bucket_object_lock_enabled and needs mode plus
+      days or years.
+    quiet: true
+  when:
+    - releasy_artifact_bucket_create_enabled | default(false)
+    - releasy_artifact_bucket_object_lock_default_retention is defined
+    - releasy_artifact_bucket_object_lock_default_retention | length > 0
+  run_once: true
+  delegate_to: localhost
+  become: false
+
 - name: Ensure artifact bucket exists
   amazon.aws.s3_bucket:
     name: "{{ releasy_artifact_bucket }}"
     state: present
     region: "{{ releasy_artifact_region }}"
-    endpoint_url: "{{ releasy_artifact_endpoint | default(omit) }}"
-    access_key: "{{ releasy_artifact_access_key | default(omit) }}"
-    secret_key: "{{ releasy_artifact_secret_key | default(omit) }}"
+    endpoint_url: >-
+      {{ releasy_artifact_endpoint
+         if (releasy_artifact_endpoint | default('') | length > 0)
+         else omit }}
+    access_key: >-
+      {{ releasy_artifact_access_key
+         if (releasy_artifact_access_key | default('') | length > 0)
+         else omit }}
+    secret_key: >-
+      {{ releasy_artifact_secret_key
+         if (releasy_artifact_secret_key | default('') | length > 0)
+         else omit }}
+    object_lock_enabled: "{{ releasy_artifact_bucket_object_lock_enabled | default(false) }}"
+    object_lock_default_retention: >-
+      {{ releasy_artifact_bucket_object_lock_default_retention
+         if (releasy_artifact_bucket_object_lock_default_retention is defined
+             and releasy_artifact_bucket_object_lock_default_retention | length > 0)
+         else omit }}
+    versioning_configuration: >-
+      {{ {'status': 'Enabled'}
+         if (releasy_artifact_bucket_versioning_enabled | default(false)
+             or releasy_artifact_bucket_object_lock_enabled | default(false))
+         else omit }}
   when: releasy_artifact_bucket_create_enabled | default(false)
   run_once: true
   delegate_to: localhost

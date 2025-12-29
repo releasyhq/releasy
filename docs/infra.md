@@ -90,6 +90,21 @@ Optional artifact bucket provisioning runs on the control node using the
 `releasy_artifact_bucket` + `releasy_artifact_region` are set (use
 `releasy_artifact_endpoint` for S3-compatible providers).
 
+For immutable artifacts, enable bucket object lock (provider support
+varies) and set a default retention policy. Object lock must be enabled
+when the bucket is created and requires versioning, which is enabled
+automatically when object lock is on.
+
+```yaml
+releasy_artifact_bucket_object_lock_enabled: true
+releasy_artifact_bucket_object_lock_default_retention:
+  mode: compliance
+  days: 3650
+```
+
+If you only want versioning without object lock, set
+`releasy_artifact_bucket_versioning_enabled: true`.
+
 If you enable bucket provisioning, install the required Ansible
 collection on the control node:
 
