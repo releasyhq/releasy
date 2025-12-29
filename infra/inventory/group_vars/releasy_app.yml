@@ -20,6 +20,7 @@ releasy_server_healthcheck_retries: 10
 releasy_server_healthcheck_delay: 2
 releasy_server_docker_extra_args: []
 releasy_registry: "ghcr.io"
+releasy_registry_login_enabled: false
 
 # Artifact storage (optional)
 releasy_artifact_endpoint: ""

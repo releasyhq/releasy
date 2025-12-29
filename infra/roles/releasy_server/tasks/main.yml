@@ -7,12 +7,18 @@
       - releasy_server_image is defined
       - releasy_server_instances is defined
       - releasy_server_instances | length > 0
+    quiet: true
+
+- name: Assert registry credentials when login is enabled
+  ansible.builtin.assert:
+    that:
       - releasy_registry is defined
       - releasy_registry_username is defined
       - releasy_registry_username | length > 0
       - releasy_registry_password is defined
       - releasy_registry_password | length > 0
     quiet: true
+  when: releasy_registry_login_enabled | default(true)
 
 - name: Install system packages
   ansible.builtin.apt:
@@ -85,6 +91,7 @@
   args:
     stdin: "{{ releasy_registry_password }}"
   no_log: true
+  when: releasy_registry_login_enabled | default(true)
 
 - name: Pull server image
   ansible.builtin.command: "docker pull {{ releasy_server_image }}"

@@ -80,13 +80,17 @@ Recommended files:
 - `inventory/group_vars/traefik.yml`: domains, TLS settings, upstreams.
 - `inventory/group_vars/keycloak.yml`: optional IdP settings.
 
+When using public container images, set `releasy_registry_login_enabled: false` in
+`inventory/group_vars/releasy_app.yml` to skip registry login. In that
+case, registry credentials are not required.
+
 Secrets live in `inventory/group_vars/all/vault.yml` and must be
 encrypted with `ansible-vault`. Suggested secret keys:
 
 - `releasy_admin_api_key`
 - `releasy_api_key_pepper`
-- `releasy_registry_username`
-- `releasy_registry_password`
+- `releasy_registry_username` (required when registry login is enabled)
+- `releasy_registry_password` (required when registry login is enabled)
 - `releasy_database_url` (if not derived from Postgres vars)
 - `releasy_artifact_access_key` / `releasy_artifact_secret_key`
 - `keycloak_admin_user` / `keycloak_admin_password` (if enabled)
