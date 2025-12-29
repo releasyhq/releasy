@@ -194,6 +194,43 @@
     - releasy_extra_ip | length > 0
     - releasy_extra_ip_cidr not in releasy_extra_ip_status.stdout
 
+- name: Build netplan addresses for extra IP (optional)
+  ansible.builtin.set_fact:
+    releasy_extra_ip_netplan_addresses: >-
+      {{
+        (
+          [releasy_extra_ip_cidr]
+          + (
+            [
+              ansible_default_ipv6.address ~ '/' ~ ansible_default_ipv6.prefix
+            ]
+            if (releasy_extra_ip_preserve_ipv6 | default(false))
+            and (ansible_default_ipv6 is defined)
+            and (ansible_default_ipv6.address is defined)
+            and (ansible_default_ipv6.prefix is defined)
+            else []
+          )
+          + (releasy_extra_ip_netplan_additional_addresses | default([]))
+        ) | unique
+      }}
+  when:
+    - releasy_extra_ip is defined
+    - releasy_extra_ip | length > 0
+    - releasy_extra_ip_persistent | default(false)
+
+- name: Render netplan config for extra IP (optional)
+  ansible.builtin.template:
+    src: releasy.floating-ip.netplan.yml.j2
+    dest: "{{ releasy_extra_ip_netplan_path | default('/etc/netplan/99-releasy-floating-ip.yaml') }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply netplan
+  when:
+    - releasy_extra_ip is defined
+    - releasy_extra_ip | length > 0
+    - releasy_extra_ip_persistent | default(false)
+
 - name: Build backend docker args
   ansible.builtin.set_fact:
     releasy_server_docker_extra_args_effective: >-

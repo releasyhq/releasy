@@ -69,3 +69,6 @@ releasy_firewall_allowed_sources: []
 # Optional extra IP assignment (app host)
 releasy_extra_ip: ""
 releasy_extra_ip_iface: "eth0"
+releasy_extra_ip_persistent: false
+releasy_extra_ip_preserve_ipv6: false
+releasy_extra_ip_netplan_additional_addresses: []

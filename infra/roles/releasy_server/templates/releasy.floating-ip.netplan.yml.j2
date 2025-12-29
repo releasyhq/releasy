@@ -1,0 +1,8 @@
+network:
+  version: 2
+  ethernets:
+    {{ releasy_extra_ip_iface }}:
+      addresses:
+{% for addr in releasy_extra_ip_netplan_addresses %}
+        - "{{ addr }}"
+{% endfor %}
