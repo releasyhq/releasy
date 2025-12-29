@@ -35,6 +35,8 @@
   roles:
     - role: tailscale
       when: tailscale_enabled | default(false)
+    - role: releasy_artifact_bucket
+      when: releasy_artifact_bucket_create_enabled | default(false)
     - role: releasy_server
 
 - name: Provision Keycloak

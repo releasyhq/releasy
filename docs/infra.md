@@ -84,6 +84,21 @@ When using public container images, set `releasy_registry_login_enabled: false` 
 `inventory/group_vars/releasy_app.yml` to skip registry login. In that
 case, registry credentials are not required.
 
+Optional artifact bucket provisioning runs on the control node using the
+`amazon.aws.s3_bucket` module. Enable it with
+`releasy_artifact_bucket_create_enabled: true` and ensure
+`releasy_artifact_bucket` + `releasy_artifact_region` are set (use
+`releasy_artifact_endpoint` for S3-compatible providers).
+
+If you enable bucket provisioning, install the required Ansible
+collection on the control node:
+
+```bash
+ansible-galaxy collection install -r infra/requirements.yml
+```
+
+The collection requires `boto3` and `botocore` on the control node.
+
 Secrets live in `inventory/group_vars/all/vault.yml` and must be
 encrypted with `ansible-vault`. Suggested secret keys:
 

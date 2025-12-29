@@ -28,6 +28,7 @@ releasy_artifact_region: ""
 releasy_artifact_bucket: ""
 releasy_artifact_path_style: false
 releasy_artifact_presign_expires_seconds: 900
+releasy_artifact_bucket_create_enabled: false
 
 releasy_download_token_ttl_seconds: 600
 releasy_log_level: "info"

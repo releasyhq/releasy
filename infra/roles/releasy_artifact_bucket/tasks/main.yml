@@ -1,0 +1,30 @@
+---
+- name: Assert artifact bucket settings
+  ansible.builtin.assert:
+    that:
+      - releasy_artifact_bucket is defined
+      - releasy_artifact_bucket | length > 0
+      - releasy_artifact_region is defined
+      - releasy_artifact_region | length > 0
+    fail_msg: >-
+      releasy_artifact_bucket_create_enabled requires releasy_artifact_bucket
+      and releasy_artifact_region.
+    quiet: true
+  when: releasy_artifact_bucket_create_enabled | default(false)
+  run_once: true
+  delegate_to: localhost
+  become: false
+
+- name: Ensure artifact bucket exists
+  amazon.aws.s3_bucket:
+    name: "{{ releasy_artifact_bucket }}"
+    state: present
+    region: "{{ releasy_artifact_region }}"
+    endpoint_url: "{{ releasy_artifact_endpoint | default(omit) }}"
+    access_key: "{{ releasy_artifact_access_key | default(omit) }}"
+    secret_key: "{{ releasy_artifact_secret_key | default(omit) }}"
+  when: releasy_artifact_bucket_create_enabled | default(false)
+  run_once: true
+  delegate_to: localhost
+  become: false
+  no_log: true
