@@ -20,6 +20,129 @@
     quiet: true
   when: releasy_registry_login_enabled | default(true)
 
+- name: Default env directory
+  ansible.builtin.set_fact:
+    releasy_env_dir: "{{ releasy_env_dir | default('/etc/releasy') }}"
+  when: releasy_env_dir is not defined or releasy_env_dir | length == 0
+
+- name: Default env file path
+  ansible.builtin.set_fact:
+    releasy_env_file: "{{ releasy_env_file | default(releasy_env_dir ~ '/releasy.env') }}"
+  when: releasy_env_file is not defined or releasy_env_file | length == 0
+
+- name: Default container port
+  ansible.builtin.set_fact:
+    releasy_container_port: "{{ releasy_container_port | default(releasy_port | default(8080)) }}"
+  when: releasy_container_port is not defined or releasy_container_port | length == 0
+
+- name: Default bind address
+  ansible.builtin.set_fact:
+    releasy_bind_addr: "{{ releasy_bind_addr | default('0.0.0.0:' ~ releasy_container_port) }}"
+  when: releasy_bind_addr is not defined or releasy_bind_addr | length == 0
+
+- name: Default operator JWKS TTL seconds
+  ansible.builtin.set_fact:
+    releasy_operator_jwks_ttl_seconds: "{{ releasy_operator_jwks_ttl_seconds | default(300) }}"
+  when: releasy_operator_jwks_ttl_seconds is not defined
+
+- name: Default operator JWT leeway seconds
+  ansible.builtin.set_fact:
+    releasy_operator_jwt_leeway_seconds: "{{ releasy_operator_jwt_leeway_seconds | default(0) }}"
+  when: releasy_operator_jwt_leeway_seconds is not defined
+
+- name: Default server container name prefix
+  ansible.builtin.set_fact:
+    releasy_server_container_name_prefix: >-
+      {{ releasy_server_container_name_prefix | default('releasy-server') }}
+  when: releasy_server_container_name_prefix is not defined
+
+- name: Collect effective host addresses
+  ansible.builtin.set_fact:
+    releasy_app_host_addrs: >-
+      {%- set addrs = [] -%}
+      {%- for host in groups.get('releasy_app', []) -%}
+      {%-   set addr = (hostvars[host].ansible_host | default(host, true)) | string | trim -%}
+      {%-   if addr | length > 0 -%}
+      {%-     set _ = addrs.append(addr) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ addrs }}
+    releasy_db_host_addrs: >-
+      {%- set addrs = [] -%}
+      {%- for host in groups.get('releasy_db', []) -%}
+      {%-   set addr = (hostvars[host].ansible_host | default(host, true)) | string | trim -%}
+      {%-   if addr | length > 0 -%}
+      {%-     set _ = addrs.append(addr) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ addrs }}
+
+- name: Determine single-host mode
+  ansible.builtin.set_fact:
+    releasy_single_host_mode: >-
+      {{
+        (releasy_app_host_addrs | length > 0)
+        and (releasy_db_host_addrs | length > 0)
+        and ((releasy_app_host_addrs | unique) | length == 1)
+        and ((releasy_db_host_addrs | unique) | length == 1)
+        and ((releasy_app_host_addrs | unique)[0] == (releasy_db_host_addrs | unique)[0])
+      }}
+
+- name: Collect inventory DB address
+  ansible.builtin.set_fact:
+    releasy_db_host_addr: >-
+      {{
+        (hostvars[releasy_db_primary_host].ansible_host
+          | default(releasy_db_primary_host, true))
+        | string
+        | trim
+      }}
+  when: releasy_db_primary_host | default('') | length > 0
+
+- name: Derive inventory DB private IPv4 address
+  ansible.builtin.set_fact:
+    releasy_db_host_private_ipv4: >-
+      {{
+        releasy_db_host_addr
+        if releasy_db_host_addr is match('^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)')
+        else ''
+      }}
+  when:
+    - releasy_db_primary_host | default('') | length > 0
+    - releasy_db_host_addr is defined
+
+- name: Derive inventory DB primary IPv4 address
+  ansible.builtin.set_fact:
+    releasy_db_host_primary_ipv4: >-
+      {{
+        (hostvars[releasy_db_primary_host].get('ansible_default_ipv4', {}).get('address', '')
+          | default(releasy_db_host_private_ipv4, true))
+        | default(releasy_db_host_addr, true)
+      }}
+  when:
+    - releasy_db_primary_host | default('') | length > 0
+    - releasy_db_host_addr is defined
+
+- name: Default Postgres host to DB primary IP on single host without Tailscale
+  ansible.builtin.set_fact:
+    postgres_host: "{{ releasy_db_host_primary_ipv4 }}"
+  when:
+    - not (tailscale_enabled | default(false))
+    - releasy_single_host_mode
+    - postgres_host_auto is defined
+    - postgres_host == postgres_host_auto
+    - releasy_db_host_primary_ipv4 | length > 0
+
+- name: Default Postgres host to DB primary IP when Tailscale is disabled
+  ansible.builtin.set_fact:
+    postgres_host: "{{ releasy_db_host_primary_ipv4 }}"
+  when:
+    - not (tailscale_enabled | default(false))
+    - not releasy_single_host_mode
+    - postgres_host_auto is defined
+    - postgres_host == postgres_host_auto
+    - releasy_db_host_primary_ipv4 | length > 0
+
 - name: Install system packages
   ansible.builtin.apt:
     name:

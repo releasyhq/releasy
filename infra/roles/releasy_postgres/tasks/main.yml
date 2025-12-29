@@ -19,6 +19,133 @@
     quiet: true
   when: keycloak_enabled | default(false)
 
+- name: Collect effective host addresses
+  ansible.builtin.set_fact:
+    releasy_app_host_addrs: >-
+      {%- set addrs = [] -%}
+      {%- for host in groups.get('releasy_app', []) -%}
+      {%-   set addr = (hostvars[host].ansible_host | default(host, true)) | string | trim -%}
+      {%-   if addr | length > 0 -%}
+      {%-     set _ = addrs.append(addr) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ addrs }}
+    releasy_db_host_addrs: >-
+      {%- set addrs = [] -%}
+      {%- for host in groups.get('releasy_db', []) -%}
+      {%-   set addr = (hostvars[host].ansible_host | default(host, true)) | string | trim -%}
+      {%-   if addr | length > 0 -%}
+      {%-     set _ = addrs.append(addr) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ addrs }}
+
+- name: Determine single-host mode
+  ansible.builtin.set_fact:
+    releasy_single_host_mode: >-
+      {{
+        (releasy_app_host_addrs | length > 0)
+        and (releasy_db_host_addrs | length > 0)
+        and ((releasy_app_host_addrs | unique) | length == 1)
+        and ((releasy_db_host_addrs | unique) | length == 1)
+        and ((releasy_app_host_addrs | unique)[0] == (releasy_db_host_addrs | unique)[0])
+      }}
+
+- name: Collect inventory IPv4 addresses
+  ansible.builtin.set_fact:
+    releasy_app_host_ipv4s: >-
+      {{
+        releasy_app_host_addrs
+        | select('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')
+        | list
+      }}
+    releasy_app_host_private_ipv4s: >-
+      {{
+        releasy_app_host_addrs
+        | select('match', '^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)')
+        | list
+      }}
+
+- name: Collect inventory DB address
+  ansible.builtin.set_fact:
+    releasy_db_host_addr: "{{ (ansible_host | default(inventory_hostname, true)) | string | trim }}"
+
+- name: Derive inventory DB IPv4 addresses
+  ansible.builtin.set_fact:
+    releasy_db_host_ipv4: >-
+      {{
+        releasy_db_host_addr
+        if releasy_db_host_addr is match('^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')
+        else ''
+      }}
+    releasy_db_host_private_ipv4: >-
+      {{
+        releasy_db_host_addr
+        if releasy_db_host_addr is match('^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)')
+        else ''
+      }}
+
+- name: Determine DB primary IPv4 address
+  ansible.builtin.set_fact:
+    releasy_db_host_primary_ipv4: >-
+      {{
+        ansible_default_ipv4.address
+        | default(releasy_db_host_private_ipv4, true)
+        | default(releasy_db_host_ipv4, true)
+      }}
+
+- name: Determine Docker bridge CIDR
+  ansible.builtin.set_fact:
+    releasy_docker_bridge_cidr: >-
+      {{
+        (ansible_docker0.ipv4.network ~ '/' ~ ansible_docker0.ipv4.prefix)
+        if (ansible_docker0 is defined
+            and ansible_docker0.ipv4 is defined
+            and ansible_docker0.ipv4.network is defined
+            and ansible_docker0.ipv4.prefix is defined)
+        else ''
+      }}
+
+- name: Default Postgres networking for single host without Tailscale
+  ansible.builtin.set_fact:
+    postgres_listen_addresses: "{{ releasy_db_host_primary_ipv4 }}"
+    postgres_allowed_cidrs: >-
+      {{
+        ['127.0.0.1/32']
+        + ([releasy_docker_bridge_cidr]
+           if (releasy_docker_bridge_cidr | length > 0)
+           else [])
+      }}
+    postgres_allowed_cidrs_auto_enabled: false
+  when:
+    - postgres_listen_addresses == 'tailscale'
+    - not (tailscale_enabled | default(false))
+    - releasy_single_host_mode
+    - releasy_db_host_primary_ipv4 | length > 0
+
+- name: Default Postgres listen address from primary inventory IP
+  ansible.builtin.set_fact:
+    postgres_listen_addresses: "{{ releasy_db_host_primary_ipv4 }}"
+  when:
+    - postgres_listen_addresses == 'tailscale'
+    - not (tailscale_enabled | default(false))
+    - releasy_db_host_primary_ipv4 | length > 0
+
+- name: Assert IP is available for Postgres when Tailscale is disabled
+  ansible.builtin.assert:
+    that:
+      - releasy_db_host_primary_ipv4 | length > 0
+    quiet: true
+    fail_msg: >-
+      postgres_listen_addresses is set to 'tailscale' but tailscale_enabled is
+      false and no usable IPv4 address was found for the DB host. Set
+      ansible_host to a private IPv4, or set postgres_listen_addresses and
+      postgres_allowed_cidrs explicitly, or enable Tailscale.
+  when:
+    - postgres_listen_addresses == 'tailscale'
+    - not (tailscale_enabled | default(false))
+    - not releasy_single_host_mode
+
 - name: Get Tailscale IPv4 address
   ansible.builtin.command: tailscale ip -4
   register: tailscale_ip
@@ -27,7 +154,9 @@
   retries: 10
   delay: 2
   until: tailscale_ip.stdout | trim != ''
-  when: postgres_listen_addresses == 'tailscale'
+  when:
+    - postgres_listen_addresses == 'tailscale'
+    - tailscale_enabled | default(false)
 
 - name: Resolve Postgres listen address
   ansible.builtin.set_fact:
@@ -43,6 +172,34 @@
     postgres_allowed_cidrs_static: "{{ postgres_allowed_cidrs | default([]) }}"
     postgres_allowed_cidrs_effective: "{{ postgres_allowed_cidrs | default([]) }}"
 
+- name: Build auto allowed CIDRs from inventory IPs
+  ansible.builtin.set_fact:
+    postgres_allowed_cidrs_auto: >-
+      {{
+        releasy_app_host_private_ipv4s
+        | map('regex_replace', '$', '/32')
+        | list
+      }}
+  when:
+    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - not (tailscale_enabled | default(false))
+    - not releasy_single_host_mode
+
+- name: Assert auto CIDRs from inventory discovered
+  ansible.builtin.assert:
+    that:
+      - postgres_allowed_cidrs_auto | default([]) | length > 0
+    quiet: true
+    fail_msg: >-
+      postgres_allowed_cidrs_auto_enabled is true but no private IPv4
+      addresses were found for releasy_app hosts. Set ansible_host to private
+      IPv4 addresses, set postgres_allowed_cidrs explicitly, or enable
+      Tailscale.
+  when:
+    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - not (tailscale_enabled | default(false))
+    - not releasy_single_host_mode
+
 - name: Collect app Tailscale hostnames
   ansible.builtin.set_fact:
     postgres_app_tailscale_hostnames: >-
@@ -54,7 +211,9 @@
         | select('match', '.+')
         | list
       }}
-  when: postgres_allowed_cidrs_auto_enabled | default(false)
+  when:
+    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - tailscale_enabled | default(false)
 
 - name: Collect app Tailscale IPv4 addresses
   ansible.builtin.command: tailscale ip -4
@@ -63,7 +222,9 @@
   failed_when: false
   delegate_to: "{{ item }}"
   loop: "{{ groups.get('releasy_app', []) }}"
-  when: postgres_allowed_cidrs_auto_enabled | default(false)
+  when:
+    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - tailscale_enabled | default(false)
 
 - name: Build auto allowed CIDRs from app hosts
   ansible.builtin.set_fact:
@@ -77,7 +238,9 @@
         | map('regex_replace', '$', '/32')
         | list
       }}
-  when: postgres_allowed_cidrs_auto_enabled | default(false)
+  when:
+    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - tailscale_enabled | default(false)
 
 - name: Read Tailscale status for fallback
   ansible.builtin.command: tailscale status --json
@@ -85,6 +248,7 @@
   changed_when: false
   failed_when: false
   when: postgres_allowed_cidrs_auto_enabled | default(false)
+    and (tailscale_enabled | default(false))
     and (postgres_allowed_cidrs_auto | default([]) | length == 0)
     and (postgres_app_tailscale_hostnames | default([]) | length > 0)
 
@@ -107,6 +271,7 @@
         | list
       }}
   when: postgres_allowed_cidrs_auto_enabled | default(false)
+    and (tailscale_enabled | default(false))
     and (postgres_allowed_cidrs_auto | default([]) | length == 0)
     and (postgres_app_tailscale_hostnames | default([]) | length > 0)
     and postgres_tailscale_status.rc == 0
@@ -130,7 +295,9 @@
       addresses were discovered for releasy_app hosts. Ensure tailscaled is
       running on the app host(s) and 'tailscale ip -4' returns an IPv4, or
       verify that tailscale_hostname is set for releasy_app hosts.
-  when: postgres_allowed_cidrs_auto_enabled | default(false)
+  when:
+    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - tailscale_enabled | default(false)
 
 - name: Assert Tailscale listen address is available
   ansible.builtin.assert:

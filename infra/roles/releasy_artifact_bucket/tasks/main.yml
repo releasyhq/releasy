@@ -69,3 +69,15 @@
   delegate_to: localhost
   become: false
   no_log: true
+  register: releasy_artifact_bucket_result
+  changed_when: >-
+    {{
+      (releasy_artifact_bucket_result is not failed)
+      and (releasy_artifact_bucket_result.changed | default(false))
+    }}
+  failed_when: >-
+    {{
+      (releasy_artifact_bucket_result is failed)
+      and ('BucketAlreadyExists' not in (releasy_artifact_bucket_result.msg | default('')))
+      and ('BucketAlreadyOwnedByYou' not in (releasy_artifact_bucket_result.msg | default('')))
+    }}

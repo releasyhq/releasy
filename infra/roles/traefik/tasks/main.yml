@@ -92,6 +92,43 @@
     mode: "0644"
   notify: Restart traefik
 
+- name: Default Traefik rate limit settings
+  ansible.builtin.set_fact:
+    traefik_rate_limit_average: "{{ traefik_rate_limit_average | default(1) }}"
+    traefik_rate_limit_burst: "{{ traefik_rate_limit_burst | default(30) }}"
+  when:
+    - traefik_rate_limit_average is not defined
+    - traefik_rate_limit_burst is not defined
+
+- name: Default Releasy upstreams from app hosts
+  ansible.builtin.set_fact:
+    releasy_server_upstreams: >-
+      {%- set upstreams = [] -%}
+      {%- for host in groups.get('releasy_app', []) -%}
+      {%-   set host_ip = (hostvars[host].ansible_host | default(host, true)) | string | trim -%}
+      {%-   if host_ip | length > 0 -%}
+      {%-     set base_port = (hostvars[host].releasy_server_instance_port_base
+      | default(hostvars[host].releasy_port | default(8080))) | int -%}
+      {%-     set instances = hostvars[host].releasy_server_instances | default(['blue', 'green']) -%}
+      {%-     for idx in range(0, instances | length) -%}
+      {%-       set _ = upstreams.append('http://' ~ host_ip ~ ':' ~ (base_port + idx)) -%}
+      {%-     endfor -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ upstreams }}
+  when: releasy_server_upstreams is not defined
+
+- name: Assert Releasy upstreams are available
+  ansible.builtin.assert:
+    that:
+      - releasy_server_upstreams is defined
+      - releasy_server_upstreams | length > 0
+    quiet: true
+    fail_msg: >-
+      releasy_server_upstreams is empty. Define releasy_server_upstreams
+      explicitly or add at least one host to the releasy_app group with
+      releasy_server_instances and instance ports.
+
 - name: Render Traefik dynamic config
   ansible.builtin.template:
     src: dynamic.yml.j2

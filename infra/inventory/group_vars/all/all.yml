@@ -7,15 +7,15 @@ postgres_host_auto: >-
     (
       hostvars[releasy_db_primary_host].tailscale_dns_name
       | default(
-        hostvars[releasy_db_primary_host].tailscale_hostname
-        | default(
-          hostvars[releasy_db_primary_host].ansible_host
-          | default(releasy_db_primary_host)
-        ),
+        hostvars[releasy_db_primary_host].tailscale_hostname,
         true
       )
     )
-    if releasy_db_primary_host else ''
+    if (releasy_db_primary_host and (hostvars[releasy_db_primary_host].tailscale_enabled | default(false)))
+    else (
+      hostvars[releasy_db_primary_host].ansible_host
+      | default(releasy_db_primary_host)
+    )
   }}
 postgres_host: "{{ postgres_host_auto }}"
 postgres_port: 5432
