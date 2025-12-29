@@ -11,7 +11,7 @@ impl Database {
         key: &str,
         endpoint: &str,
     ) -> Result<Option<IdempotencyRecord>, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_get_idempotency_query::<Db>(key, endpoint);
             let row = builder.build().fetch_optional(pool).await?;
             row.map(map_idempotency).transpose()
@@ -22,7 +22,7 @@ impl Database {
         &self,
         record: &IdempotencyRecord,
     ) -> Result<u64, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let ignore_conflicts = <Db as DbDialect>::IS_SQLITE;
             let base_sql = insert_idempotency_base_sql(ignore_conflicts);
             let mut builder = build_insert_idempotency_query::<Db>(base_sql.as_ref(), record);
@@ -40,7 +40,7 @@ impl Database {
         &self,
         record: &IdempotencyRecord,
     ) -> Result<u64, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_update_idempotency_query::<Db>(record);
             let result = builder.build().execute(pool).await?;
             Ok(result.rows_affected())
@@ -52,7 +52,7 @@ impl Database {
         key: &str,
         endpoint: &str,
     ) -> Result<u64, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_delete_idempotency_query::<Db>(key, endpoint);
             let result = builder.build().execute(pool).await?;
             Ok(result.rows_affected())

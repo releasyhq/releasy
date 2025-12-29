@@ -12,7 +12,7 @@ impl Database {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> Result<Vec<EntitlementRecord>, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder =
                 build_list_entitlements_query::<Db>(customer_id, product, limit, offset);
             let rows = builder.build().fetch_all(pool).await?;
@@ -25,7 +25,7 @@ impl Database {
         customer_id: &str,
         entitlement_id: &str,
     ) -> Result<Option<EntitlementRecord>, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_get_entitlement_query::<Db>(customer_id, entitlement_id);
             let row = builder.build().fetch_optional(pool).await?;
             row.map(map_entitlement).transpose()
@@ -37,7 +37,7 @@ impl Database {
         &self,
         entitlement: &EntitlementRecord,
     ) -> Result<(), sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_insert_entitlement_query::<Db>(entitlement);
             builder.build().execute(pool).await?;
             Ok(())
@@ -48,7 +48,7 @@ impl Database {
         &self,
         entitlement: &EntitlementRecord,
     ) -> Result<u64, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_update_entitlement_query::<Db>(entitlement);
             let result = builder.build().execute(pool).await?;
             Ok(result.rows_affected())
@@ -60,7 +60,7 @@ impl Database {
         customer_id: &str,
         entitlement_id: &str,
     ) -> Result<u64, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_delete_entitlement_query::<Db>(customer_id, entitlement_id);
             let result = builder.build().execute(pool).await?;
             Ok(result.rows_affected())

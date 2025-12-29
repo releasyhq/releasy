@@ -9,7 +9,7 @@ impl Database {
         &self,
         key_prefix: &str,
     ) -> Result<Vec<ApiKeyAuthRecord>, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_get_api_keys_by_prefix_query::<Db>(key_prefix);
             let rows = builder.build().fetch_all(pool).await?;
             rows.into_iter().map(map_api_key_auth).collect()
@@ -17,7 +17,7 @@ impl Database {
     }
 
     pub async fn insert_api_key(&self, api_key: &ApiKeyRecord) -> Result<(), sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_insert_api_key_query::<Db>(api_key);
             builder.build().execute(pool).await?;
             Ok(())
@@ -25,7 +25,7 @@ impl Database {
     }
 
     pub async fn revoke_api_key(&self, key_id: &str, timestamp: i64) -> Result<u64, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_revoke_api_key_query::<Db>(key_id, timestamp);
             let result = builder.build().execute(pool).await?;
             Ok(result.rows_affected())
@@ -37,7 +37,7 @@ impl Database {
         key_id: &str,
         key_hash: &str,
     ) -> Result<u64, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_update_api_key_hash_query::<Db>(key_id, key_hash);
             let result = builder.build().execute(pool).await?;
             Ok(result.rows_affected())
@@ -49,7 +49,7 @@ impl Database {
         key_id: &str,
         timestamp: i64,
     ) -> Result<u64, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_update_api_key_last_used_query::<Db>(key_id, timestamp);
             let result = builder.build().execute(pool).await?;
             Ok(result.rows_affected())

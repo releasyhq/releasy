@@ -6,7 +6,7 @@ use super::{Database, sql};
 
 impl Database {
     pub async fn customer_exists(&self, customer_id: &str) -> Result<bool, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_customer_exists_query::<Db>(customer_id);
             let row = builder.build().fetch_optional(pool).await?;
             Ok(row.is_some())
@@ -14,7 +14,7 @@ impl Database {
     }
 
     pub async fn insert_customer(&self, customer: &Customer) -> Result<(), sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_insert_customer_query::<Db>(customer);
             builder.build().execute(pool).await?;
             Ok(())
@@ -22,7 +22,7 @@ impl Database {
     }
 
     pub async fn get_customer(&self, customer_id: &str) -> Result<Option<Customer>, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_get_customer_query::<Db>(customer_id);
             let row = builder.build().fetch_optional(pool).await?;
             row.map(map_customer).transpose()

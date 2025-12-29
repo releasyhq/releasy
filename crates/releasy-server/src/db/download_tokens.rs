@@ -9,7 +9,7 @@ impl Database {
         &self,
         token: &DownloadTokenRecord,
     ) -> Result<(), sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_insert_download_token_query::<Db>(token);
             builder.build().execute(pool).await?;
             Ok(())
@@ -20,7 +20,7 @@ impl Database {
         &self,
         token_hash: &str,
     ) -> Result<Option<DownloadTokenRecord>, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_get_download_token_query::<Db>(token_hash);
             let row = builder.build().fetch_optional(pool).await?;
             row.map(map_download_token).transpose()

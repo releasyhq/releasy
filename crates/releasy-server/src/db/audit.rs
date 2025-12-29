@@ -12,7 +12,7 @@ impl Database {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<AuditEventRecord>, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_list_audit_events_query::<Db>(filter, limit, offset);
             let rows = builder.build().fetch_all(pool).await?;
             rows.into_iter().map(map_audit_event).collect()
@@ -28,7 +28,7 @@ impl Database {
         created_at: i64,
     ) -> Result<(), sqlx::Error> {
         let id = Uuid::new_v4().to_string();
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_insert_audit_event_query::<Db>(
                 &id,
                 customer_id,

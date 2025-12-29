@@ -1,8 +1,15 @@
-use sqlx::{Execute, Row};
+use sqlx::{Execute, Row, SqlitePool};
 
 use super::Database;
 use super::test_support::{api_key_record, cases, normalize_sql, setup_db};
 use crate::models::Customer;
+
+fn sqlite_pool(db: &Database) -> &SqlitePool {
+    match db {
+        Database::Sqlite(pool) => pool,
+        Database::Postgres(_) => panic!("sqlite expected"),
+    }
+}
 
 #[test]
 fn list_releases_query_postgres_all_combinations() {
@@ -37,10 +44,7 @@ fn list_releases_query_sqlite_all_combinations() {
 #[tokio::test]
 async fn release_index_used_for_product_status_filter() {
     let db = setup_db().await;
-    let pool = match &db {
-        Database::Sqlite(pool) => pool,
-        Database::Postgres(_) => panic!("sqlite expected"),
-    };
+    let pool = sqlite_pool(&db);
 
     sqlx::query(
         "INSERT INTO releases (id, product, version, status, created_at, published_at) \
@@ -78,10 +82,7 @@ async fn release_index_used_for_product_status_filter() {
 #[tokio::test]
 async fn release_index_hint_rejects_unknown_index() {
     let db = setup_db().await;
-    let pool = match &db {
-        Database::Sqlite(pool) => pool,
-        Database::Postgres(_) => panic!("sqlite expected"),
-    };
+    let pool = sqlite_pool(&db);
 
     let result = sqlx::query(
         "EXPLAIN QUERY PLAN SELECT id FROM releases \

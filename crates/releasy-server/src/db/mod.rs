@@ -2,7 +2,7 @@ use sqlx::{PgPool, SqlitePool, postgres::PgPoolOptions, sqlite::SqlitePoolOption
 
 use crate::config::Settings;
 
-pub(crate) trait DbDialect {
+trait DbDialect {
     const IS_SQLITE: bool;
 }
 
@@ -14,8 +14,13 @@ impl DbDialect for sqlx::Sqlite {
     const IS_SQLITE: bool = true;
 }
 
-#[macro_export]
 macro_rules! with_db {
+    ($db:expr, |$pool:ident| $body:block) => {{
+        match $db {
+            $crate::db::Database::Postgres($pool) => $body,
+            $crate::db::Database::Sqlite($pool) => $body,
+        }
+    }};
     ($db:expr, |$pool:ident, $db_ty:ident| $body:block) => {{
         match $db {
             $crate::db::Database::Postgres($pool) => {
@@ -79,16 +84,12 @@ impl Database {
 
     pub async fn migrate(&self) -> Result<(), String> {
         let migrator = sqlx::migrate!("../../migrations");
-        match self {
-            Database::Postgres(pool) => migrator
+        with_db!(self, |pool| {
+            migrator
                 .run(pool)
                 .await
-                .map_err(|err| format!("database migration failed: {err}")),
-            Database::Sqlite(pool) => migrator
-                .run(pool)
-                .await
-                .map_err(|err| format!("database migration failed: {err}")),
-        }
+                .map_err(|err| format!("database migration failed: {err}"))
+        })
     }
 }
 

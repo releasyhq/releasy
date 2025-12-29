@@ -6,7 +6,7 @@ use super::{Database, sql};
 
 impl Database {
     pub async fn insert_release(&self, release: &ReleaseRecord) -> Result<(), sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_insert_release_query::<Db>(release);
             builder.build().execute(pool).await?;
             Ok(())
@@ -17,7 +17,7 @@ impl Database {
         &self,
         release_id: &str,
     ) -> Result<Option<ReleaseRecord>, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_get_release_query::<Db>(release_id);
             let row = builder.build().fetch_optional(pool).await?;
             row.map(map_release).transpose()
@@ -32,7 +32,7 @@ impl Database {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<ReleaseRecord>, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder =
                 Database::build_list_releases_query::<Db>(product, status, version, limit, offset);
             let rows = builder.build().fetch_all(pool).await?;
@@ -51,7 +51,7 @@ impl Database {
             return Ok(Vec::new());
         }
 
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_list_published_releases_for_products_query::<Db>(
                 products, version, limit, offset,
             );
@@ -67,7 +67,7 @@ impl Database {
         published_at: Option<i64>,
         expected_status: Option<&str>,
     ) -> Result<u64, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_update_release_status_query::<Db>(
                 release_id,
                 status,
@@ -80,7 +80,7 @@ impl Database {
     }
 
     pub async fn delete_release(&self, release_id: &str) -> Result<u64, sqlx::Error> {
-        crate::with_db!(self, |pool, Db| {
+        with_db!(self, |pool, Db| {
             let mut builder = build_delete_release_query::<Db>(release_id);
             let result = builder.build().execute(pool).await?;
             Ok(result.rows_affected())
