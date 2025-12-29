@@ -1,4 +1,6 @@
 use sqlx::{Execute, Row};
+use std::fs;
+use std::path::Path;
 
 use super::Database;
 use super::test_support::{api_key_record, cases, normalize_sql};
@@ -114,4 +116,24 @@ async fn api_keys_fk_rejects_missing_customer() {
     let result = db.insert_api_key(&record).await;
 
     assert!(result.is_err());
+}
+
+#[test]
+fn entitlements_migration_uses_bigint_columns() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/0013_entitlements_bigint.sql");
+    let sql = fs::read_to_string(&path).expect("read entitlements migration");
+
+    assert!(
+        sql.contains("starts_at BIGINT NOT NULL"),
+        "expected BIGINT starts_at in {path:?}"
+    );
+    assert!(
+        sql.contains("ends_at BIGINT"),
+        "expected BIGINT ends_at in {path:?}"
+    );
+    assert!(
+        !sql.contains("starts_at INTEGER NOT NULL"),
+        "unexpected INTEGER starts_at in {path:?}"
+    );
 }
