@@ -47,6 +47,44 @@ docker run -d \
 
 See the [Getting Started Guide](getting-started.md) for a complete walkthrough.
 
+## Public Test Server
+
+Want to try Releasy without setting up your own instance? We provide a public
+test server with a read-only customer API key that can list and download
+published `releasy-server` releases.
+
+**Base URL:** `https://test.releasyhq.com`  
+**Public API key:** `releasy_u76NKndhiDIVDEfKuAshhiKyliAuBi2CMUmIiMGPP8s`  
+**Scopes:** `releases:read`, `downloads:read`, `downloads:token`
+
+List published releases (with artifacts):
+
+```bash
+export RELEASY_BASE_URL="https://test.releasyhq.com"
+export RELEASY_PUBLIC_API_KEY="releasy_u76NKndhiDIVDEfKuAshhiKyliAuBi2CMUmIiMGPP8s"
+
+curl -sS \
+  -H "x-releasy-api-key: $RELEASY_PUBLIC_API_KEY" \
+  "$RELEASY_BASE_URL/v1/releases?product=releasy-server&include_artifacts=true"
+```
+
+Request a download token and fetch the artifact:
+
+```bash
+export ARTIFACT_ID="4c111a59-dfb0-4099-ba3b-90bd6c56458e" # Version 0.1.1
+
+DOWNLOAD_URL="$(curl -sS \
+  -H "x-releasy-api-key: $RELEASY_PUBLIC_API_KEY" \
+  -H "content-type: application/json" \
+  -d "{\"artifact_id\":\"$ARTIFACT_ID\",\"expires_in_seconds\":300}" \
+  "$RELEASY_BASE_URL/v1/downloads/token" | \
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["download_url"])')"
+
+curl -L "$DOWNLOAD_URL" -o releasy-server-linux-x86_64.tar.gz
+```
+
+Note: This key is public and may be rotated or rate-limited.
+
 ## Core Concepts
 
 ### Releases
