@@ -104,12 +104,15 @@ request() {
 
 json_get() {
   local key="$1"
-  "$PYTHON_BIN" - "$key" <<'PY'
+  "$PYTHON_BIN" -c '
 import json
 import sys
 
 key = sys.argv[1]
-data = json.load(sys.stdin)
+raw = sys.stdin.read()
+if not raw.strip():
+    raise SystemExit("empty response body")
+data = json.loads(raw)
 if key not in data:
     raise SystemExit(f"missing key: {key}")
 value = data[key]
@@ -117,15 +120,18 @@ if isinstance(value, (dict, list)):
     print(json.dumps(value))
 else:
     print(value)
-PY
+' "$key"
 }
 
 json_get_release_id() {
-  "$PYTHON_BIN" - <<'PY'
+  "$PYTHON_BIN" -c '
 import json
 import sys
 
-data = json.load(sys.stdin)
+raw = sys.stdin.read()
+if not raw.strip():
+    raise SystemExit("empty response body")
+data = json.loads(raw)
 releases = data.get("releases") or []
 if not releases:
     raise SystemExit("no releases found")
@@ -133,23 +139,26 @@ release_id = releases[0].get("id")
 if not release_id:
     raise SystemExit("release id missing")
 print(release_id)
-PY
+'
 }
 
 json_error_message() {
-  "$PYTHON_BIN" - <<'PY'
+  "$PYTHON_BIN" -c '
 import json
 import sys
 
+raw = sys.stdin.read()
+if not raw.strip():
+    sys.exit(0)
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(raw)
 except json.JSONDecodeError:
     sys.exit(0)
 error = data.get("error") or {}
 message = error.get("message")
 if message:
     print(message)
-PY
+'
 }
 
 expect_success() {

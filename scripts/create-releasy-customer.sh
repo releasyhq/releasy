@@ -112,7 +112,7 @@ request() {
 
 json_get() {
   local key="$1"
-  "$PYTHON_BIN" - "$key" <<'PY'
+  "$PYTHON_BIN" -c '
 import json
 import sys
 
@@ -134,11 +134,11 @@ if isinstance(value, (dict, list)):
     print(json.dumps(value))
 else:
     print(value)
-PY
+' "$key"
 }
 
 json_error_message() {
-  "$PYTHON_BIN" - <<'PY'
+  "$PYTHON_BIN" -c '
 import json
 import sys
 
@@ -153,7 +153,7 @@ error = data.get("error") or {}
 message = error.get("message")
 if message:
     print(message)
-PY
+'
 }
 
 expect_success() {
