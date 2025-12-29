@@ -12,7 +12,6 @@ use super::test_support::{
 };
 use super::*;
 use crate::auth::{api_key_prefix, hash_api_key};
-use crate::db::Database;
 use crate::models::{
     ApiKeyRecord, ArtifactRecord, Customer, EntitlementRecord, ReleaseRecord, default_scopes,
     scopes_to_json,
@@ -353,10 +352,7 @@ async fn register_release_artifact_persists_record() {
     .expect("register");
     assert_eq!(response.id, artifact_id);
 
-    let pool = match &state.db {
-        Database::Sqlite(pool) => pool,
-        Database::Postgres(_) => panic!("sqlite expected"),
-    };
+    let pool = crate::test_support::sqlite_pool(&state.db);
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM artifacts WHERE release_id = ? AND object_key = ?",
     )

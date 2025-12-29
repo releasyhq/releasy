@@ -1,15 +1,9 @@
-use sqlx::{Execute, Row, SqlitePool};
+use sqlx::{Execute, Row};
 
 use super::Database;
-use super::test_support::{api_key_record, cases, normalize_sql, setup_db};
+use super::test_support::{api_key_record, cases, normalize_sql};
 use crate::models::Customer;
-
-fn sqlite_pool(db: &Database) -> &SqlitePool {
-    match db {
-        Database::Sqlite(pool) => pool,
-        Database::Postgres(_) => panic!("sqlite expected"),
-    }
-}
+use crate::test_support::{setup_default_db, sqlite_pool};
 
 #[test]
 fn list_releases_query_postgres_all_combinations() {
@@ -43,7 +37,7 @@ fn list_releases_query_sqlite_all_combinations() {
 
 #[tokio::test]
 async fn release_index_used_for_product_status_filter() {
-    let db = setup_db().await;
+    let db = setup_default_db().await;
     let pool = sqlite_pool(&db);
 
     sqlx::query(
@@ -81,7 +75,7 @@ async fn release_index_used_for_product_status_filter() {
 
 #[tokio::test]
 async fn release_index_hint_rejects_unknown_index() {
-    let db = setup_db().await;
+    let db = setup_default_db().await;
     let pool = sqlite_pool(&db);
 
     let result = sqlx::query(
@@ -97,7 +91,7 @@ async fn release_index_hint_rejects_unknown_index() {
 
 #[tokio::test]
 async fn api_keys_fk_allows_existing_customer() {
-    let db = setup_db().await;
+    let db = setup_default_db().await;
     let customer = Customer {
         id: "customer".to_string(),
         name: "Customer".to_string(),
@@ -114,7 +108,7 @@ async fn api_keys_fk_allows_existing_customer() {
 
 #[tokio::test]
 async fn api_keys_fk_rejects_missing_customer() {
-    let db = setup_db().await;
+    let db = setup_default_db().await;
 
     let record = api_key_record("missing-customer");
     let result = db.insert_api_key(&record).await;

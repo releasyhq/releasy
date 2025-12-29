@@ -7,30 +7,14 @@ use tokio::sync::Barrier;
 use super::RELEASE_UPDATE_BARRIER;
 use crate::app::AppState;
 use crate::config::{ArtifactSettings, Settings};
-use crate::db::Database;
+use crate::test_support::{ADMIN_TEST_KEY, setup_db, test_settings_with_admin_key};
 
 pub(crate) fn test_settings() -> Settings {
-    Settings {
-        bind_addr: "127.0.0.1:8080".to_string(),
-        log_level: "info".to_string(),
-        database_url: "sqlite::memory:".to_string(),
-        database_max_connections: 1,
-        download_token_ttl_seconds: 600,
-        admin_api_key: Some("secret".to_string()),
-        api_key_pepper: None,
-        operator_jwks_url: None,
-        operator_issuer: None,
-        operator_audience: None,
-        operator_resource: None,
-        operator_jwks_ttl_seconds: 300,
-        operator_jwt_leeway_seconds: 0,
-        artifact_settings: None,
-    }
+    test_settings_with_admin_key()
 }
 
 pub(crate) async fn setup_state_with_settings(settings: Settings) -> AppState {
-    let db = Database::connect(&settings).await.expect("db connect");
-    db.migrate().await.expect("db migrate");
+    let db = setup_db(&settings).await;
     AppState {
         db,
         settings,
@@ -44,7 +28,7 @@ pub(crate) async fn setup_state() -> AppState {
 
 pub(crate) fn admin_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
-    headers.insert("x-releasy-admin-key", "secret".parse().unwrap());
+    headers.insert("x-releasy-admin-key", ADMIN_TEST_KEY.parse().unwrap());
     headers
 }
 

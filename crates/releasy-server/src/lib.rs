@@ -9,3 +9,6 @@ mod models;
 pub mod openapi;
 mod release;
 mod utils;
+
+#[cfg(test)]
+pub(crate) mod test_support;

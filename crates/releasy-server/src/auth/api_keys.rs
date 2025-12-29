@@ -355,62 +355,27 @@ async fn record_api_key_audit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Settings;
     use crate::db::Database;
     use crate::models::{
         ApiKeyRecord, Customer, DEFAULT_API_KEY_TYPE, default_scopes, scopes_to_json,
     };
+    use crate::test_support::{setup_db, sqlite_pool, test_settings_with_admin_key};
     use axum::http::{HeaderMap, StatusCode};
 
-    fn test_settings() -> Settings {
-        Settings {
-            bind_addr: "127.0.0.1:8080".to_string(),
-            log_level: "info".to_string(),
-            database_url: "sqlite::memory:".to_string(),
-            database_max_connections: 1,
-            download_token_ttl_seconds: 600,
-            admin_api_key: Some("secret".to_string()),
-            api_key_pepper: None,
-            operator_jwks_url: None,
-            operator_issuer: None,
-            operator_audience: None,
-            operator_resource: None,
-            operator_jwks_ttl_seconds: 300,
-            operator_jwt_leeway_seconds: 0,
-            artifact_settings: None,
-        }
-    }
-
-    async fn setup_db(settings: &Settings) -> Database {
-        let db = Database::connect(settings).await.expect("db connect");
-        db.migrate().await.expect("db migrate");
-        db
-    }
-
     async fn fetch_last_used_at(db: &Database, key_id: &str) -> Option<i64> {
-        match db {
-            Database::Sqlite(pool) => {
-                sqlx::query_scalar("SELECT last_used_at FROM api_keys WHERE id = ?")
-                    .bind(key_id)
-                    .fetch_one(pool)
-                    .await
-                    .expect("last_used_at")
-            }
-            Database::Postgres(_) => panic!("sqlite expected"),
-        }
+        sqlx::query_scalar("SELECT last_used_at FROM api_keys WHERE id = ?")
+            .bind(key_id)
+            .fetch_one(sqlite_pool(db))
+            .await
+            .expect("last_used_at")
     }
 
     async fn fetch_key_hash(db: &Database, key_id: &str) -> String {
-        match db {
-            Database::Sqlite(pool) => {
-                sqlx::query_scalar("SELECT key_hash FROM api_keys WHERE id = ?")
-                    .bind(key_id)
-                    .fetch_one(pool)
-                    .await
-                    .expect("key_hash")
-            }
-            Database::Postgres(_) => panic!("sqlite expected"),
-        }
+        sqlx::query_scalar("SELECT key_hash FROM api_keys WHERE id = ?")
+            .bind(key_id)
+            .fetch_one(sqlite_pool(db))
+            .await
+            .expect("key_hash")
     }
 
     #[test]
@@ -458,7 +423,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticate_api_key_updates_last_used_at() {
-        let settings = test_settings();
+        let settings = test_settings_with_admin_key();
         let db = setup_db(&settings).await;
 
         let customer = Customer {
@@ -502,7 +467,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticate_api_key_upgrades_legacy_hash() {
-        let settings = test_settings();
+        let settings = test_settings_with_admin_key();
         let db = setup_db(&settings).await;
 
         let customer = Customer {
@@ -547,7 +512,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticate_api_key_does_not_update_last_used_on_failure() {
-        let settings = test_settings();
+        let settings = test_settings_with_admin_key();
         let db = setup_db(&settings).await;
 
         let customer = Customer {
@@ -592,7 +557,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticate_api_key_rejects_invalid_scopes() {
-        let settings = test_settings();
+        let settings = test_settings_with_admin_key();
         let db = setup_db(&settings).await;
 
         let customer = Customer {

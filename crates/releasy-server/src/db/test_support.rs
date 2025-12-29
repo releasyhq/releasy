@@ -1,35 +1,6 @@
 use uuid::Uuid;
 
-use crate::config::Settings;
 use crate::models::ApiKeyRecord;
-
-use super::Database;
-
-pub(crate) fn test_settings() -> Settings {
-    Settings {
-        bind_addr: "127.0.0.1:8080".to_string(),
-        log_level: "info".to_string(),
-        database_url: "sqlite::memory:".to_string(),
-        database_max_connections: 1,
-        download_token_ttl_seconds: 600,
-        admin_api_key: None,
-        api_key_pepper: None,
-        operator_jwks_url: None,
-        operator_issuer: None,
-        operator_audience: None,
-        operator_resource: None,
-        operator_jwks_ttl_seconds: 300,
-        operator_jwt_leeway_seconds: 0,
-        artifact_settings: None,
-    }
-}
-
-pub(crate) async fn setup_db() -> Database {
-    let settings = test_settings();
-    let db = Database::connect(&settings).await.expect("db connect");
-    db.migrate().await.expect("db migrate");
-    db
-}
 
 pub(crate) fn api_key_record(customer_id: &str) -> ApiKeyRecord {
     let key_id = Uuid::new_v4().to_string();
