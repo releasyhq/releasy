@@ -1,0 +1,41 @@
+---
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ../../../../requirements.yml
+
+driver:
+  name: docker
+
+platforms:
+  - name: instance
+    image: docker.io/library/alpine:3.19
+    command: sleep infinity
+  - name: minio
+    image: docker.io/minio/minio:latest
+    command: server /data --console-address ":9001"
+    env:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    published_ports:
+      - 9000:9000
+      - 9001:9001
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/..
+  inventory:
+    group_vars:
+      all:
+        releasy_artifact_bucket_create_enabled: true
+        releasy_artifact_bucket: releasy-artifacts
+        releasy_artifact_region: us-east-1
+        releasy_artifact_endpoint: http://127.0.0.1:9000
+        releasy_artifact_access_key: minio
+        releasy_artifact_secret_key: minio123
+        releasy_artifact_bucket_versioning_enabled: true
+  playbooks:
+    converge: converge.yml
+    verify: verify.yml

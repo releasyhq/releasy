@@ -80,9 +80,29 @@ Recommended files:
 - `inventory/group_vars/traefik.yml`: domains, TLS settings, upstreams.
 - `inventory/group_vars/keycloak.yml`: optional IdP settings.
 
-When using public container images, set `releasy_registry_login_enabled: false` in
-`inventory/group_vars/releasy_app.yml` to skip registry login. In that
-case, registry credentials are not required.
+### Registry and Image
+
+| Variable                         | Required | Default | Description                                  |
+|----------------------------------|----------|---------|----------------------------------------------|
+| `releasy_server_image`           | yes      | -       | Docker image with tag for the Releasy server |
+| `releasy_server_instances`       | yes      | -       | List of server instances for blue/green      |
+| `releasy_registry_login_enabled` | no       | `true`  | Set to `false` for public images             |
+| `releasy_registry_username`      | cond.    | -       | Registry username (if login enabled)         |
+| `releasy_registry_password`      | cond.    | -       | Registry password (if login enabled)         |
+
+### Artifact Bucket Provisioning
+
+| Variable                                                | Required | Default | Description                                |
+|---------------------------------------------------------|----------|---------|--------------------------------------------|
+| `releasy_artifact_bucket_create_enabled`                | no       | `false` | Enable bucket provisioning on control node |
+| `releasy_artifact_bucket`                               | cond.    | -       | S3 bucket name                             |
+| `releasy_artifact_region`                               | cond.    | -       | S3 region                                  |
+| `releasy_artifact_endpoint`                             | no       | -       | Custom S3 endpoint (MinIO, Hetzner, etc.)  |
+| `releasy_artifact_access_key`                           | cond.    | -       | S3 access key                              |
+| `releasy_artifact_secret_key`                           | cond.    | -       | S3 secret key                              |
+| `releasy_artifact_bucket_versioning_enabled`            | no       | `false` | Enable bucket versioning                   |
+| `releasy_artifact_bucket_object_lock_enabled`           | no       | `false` | Enable object lock for immutable artifacts |
+| `releasy_artifact_bucket_object_lock_default_retention` | no       | -       | Retention policy (`mode`, `days`)          |
 
 Optional artifact bucket provisioning runs on the control node using the
 `amazon.aws.s3_bucket` module. Enable it with
@@ -126,16 +146,22 @@ ansible-galaxy collection install -r infra/requirements.yml
 
 The collection requires `boto3` and `botocore` on the control node.
 
-Secrets live in `inventory/group_vars/all/vault.yml` and must be
-encrypted with `ansible-vault`. Suggested secret keys:
+### Secrets (Vault)
 
-- `releasy_admin_api_key`
-- `releasy_api_key_pepper`
-- `releasy_registry_username` (required when registry login is enabled)
-- `releasy_registry_password` (required when registry login is enabled)
-- `releasy_database_url` (if not derived from Postgres vars)
-- `releasy_artifact_access_key` / `releasy_artifact_secret_key`
-- `keycloak_admin_user` / `keycloak_admin_password` (if enabled)
+| Variable                      | Required | Description                                      |
+|-------------------------------|----------|--------------------------------------------------|
+| `releasy_admin_api_key`       | yes      | Admin bootstrap API key                          |
+| `releasy_api_key_pepper`      | no       | Additional secret for API key hashing            |
+| `releasy_database_url`        | cond.    | Database URL (if not derived from Postgres vars) |
+| `releasy_registry_username`   | cond.    | Registry username (if login enabled)             |
+| `releasy_registry_password`   | cond.    | Registry password (if login enabled)             |
+| `releasy_artifact_access_key` | cond.    | S3 access key                                    |
+| `releasy_artifact_secret_key` | cond.    | S3 secret key                                    |
+| `keycloak_admin_user`         | cond.    | Keycloak admin username (if enabled)             |
+| `keycloak_admin_password`     | cond.    | Keycloak admin password (if enabled)             |
+
+Secrets live in `inventory/group_vars/all/vault.yml` and must be
+encrypted with `ansible-vault`.
 
 ## Quickstart
 
@@ -173,6 +199,21 @@ ansible-vault encrypt inventory/group_vars/all/vault.yml \
   --vault-password-file ~/.secure/releasy-vault-pass
 ansible-playbook playbooks/site.yml \
   --vault-password-file ~/.secure/releasy-vault-pass
+```
+
+## Testing
+
+The initial Molecule setup targets the artifact bucket role using a
+local MinIO container. It requires Docker and free ports `9000`/`9001`.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r infra/requirements.txt
+ansible-galaxy collection install -r infra/requirements.yml
+
+cd infra/roles/releasy_artifact_bucket
+molecule test
 ```
 
 ## Runbook

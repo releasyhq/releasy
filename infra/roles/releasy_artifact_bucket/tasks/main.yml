@@ -59,8 +59,8 @@
          if (releasy_artifact_bucket_object_lock_default_retention is defined
              and releasy_artifact_bucket_object_lock_default_retention | length > 0)
          else omit }}
-    versioning_configuration: >-
-      {{ {'status': 'Enabled'}
+    versioning: >-
+      {{ true
          if (releasy_artifact_bucket_versioning_enabled | default(false)
              or releasy_artifact_bucket_object_lock_enabled | default(false))
          else omit }}

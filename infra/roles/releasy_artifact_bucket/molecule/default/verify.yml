@@ -1,0 +1,24 @@
+---
+- name: Verify
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Fetch bucket list
+      amazon.aws.s3_bucket_info:
+        endpoint_url: "{{ releasy_artifact_endpoint }}"
+        access_key: "{{ releasy_artifact_access_key }}"
+        secret_key: "{{ releasy_artifact_secret_key }}"
+      register: bucket_info
+
+    - name: Collect bucket names
+      ansible.builtin.set_fact:
+        bucket_names: >-
+          {{ (bucket_info.buckets | default(bucket_info.bucket_info, true))
+             | map(attribute='name')
+             | list }}
+
+    - name: Assert artifact bucket exists
+      ansible.builtin.assert:
+        that:
+          - releasy_artifact_bucket in bucket_names
+        quiet: true

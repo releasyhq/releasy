@@ -1,0 +1,6 @@
+---
+- name: Converge
+  hosts: instance
+  gather_facts: false
+  roles:
+    - role: releasy_artifact_bucket
