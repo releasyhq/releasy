@@ -9,35 +9,22 @@ impl Database {
         &self,
         token: &DownloadTokenRecord,
     ) -> Result<(), sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_insert_download_token_query::<sqlx::Postgres>(token);
-                builder.build().execute(pool).await?;
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_insert_download_token_query::<sqlx::Sqlite>(token);
-                builder.build().execute(pool).await?;
-            }
-        }
-        Ok(())
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_insert_download_token_query::<Db>(token);
+            builder.build().execute(pool).await?;
+            Ok(())
+        })
     }
 
     pub async fn get_download_token_by_hash(
         &self,
         token_hash: &str,
     ) -> Result<Option<DownloadTokenRecord>, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_get_download_token_query::<sqlx::Postgres>(token_hash);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_download_token).transpose()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_get_download_token_query::<sqlx::Sqlite>(token_hash);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_download_token).transpose()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_get_download_token_query::<Db>(token_hash);
+            let row = builder.build().fetch_optional(pool).await?;
+            row.map(map_download_token).transpose()
+        })
     }
 }
 

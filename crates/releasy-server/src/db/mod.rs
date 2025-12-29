@@ -2,6 +2,34 @@ use sqlx::{PgPool, SqlitePool, postgres::PgPoolOptions, sqlite::SqlitePoolOption
 
 use crate::config::Settings;
 
+pub(crate) trait DbDialect {
+    const IS_SQLITE: bool;
+}
+
+impl DbDialect for sqlx::Postgres {
+    const IS_SQLITE: bool = false;
+}
+
+impl DbDialect for sqlx::Sqlite {
+    const IS_SQLITE: bool = true;
+}
+
+#[macro_export]
+macro_rules! with_db {
+    ($db:expr, |$pool:ident, $db_ty:ident| $body:block) => {{
+        match $db {
+            $crate::db::Database::Postgres($pool) => {
+                type $db_ty = sqlx::Postgres;
+                $body
+            }
+            $crate::db::Database::Sqlite($pool) => {
+                type $db_ty = sqlx::Sqlite;
+                $body
+            }
+        }
+    }};
+}
+
 mod api_keys;
 mod artifacts;
 mod audit;

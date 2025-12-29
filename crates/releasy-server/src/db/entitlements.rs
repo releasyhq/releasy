@@ -12,28 +12,12 @@ impl Database {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> Result<Vec<EntitlementRecord>, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_list_entitlements_query::<sqlx::Postgres>(
-                    customer_id,
-                    product,
-                    limit,
-                    offset,
-                );
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_entitlement).collect()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_list_entitlements_query::<sqlx::Sqlite>(
-                    customer_id,
-                    product,
-                    limit,
-                    offset,
-                );
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_entitlement).collect()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder =
+                build_list_entitlements_query::<Db>(customer_id, product, limit, offset);
+            let rows = builder.build().fetch_all(pool).await?;
+            rows.into_iter().map(map_entitlement).collect()
+        })
     }
 
     pub async fn get_entitlement(
@@ -41,20 +25,11 @@ impl Database {
         customer_id: &str,
         entitlement_id: &str,
     ) -> Result<Option<EntitlementRecord>, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder =
-                    build_get_entitlement_query::<sqlx::Postgres>(customer_id, entitlement_id);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_entitlement).transpose()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder =
-                    build_get_entitlement_query::<sqlx::Sqlite>(customer_id, entitlement_id);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_entitlement).transpose()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_get_entitlement_query::<Db>(customer_id, entitlement_id);
+            let row = builder.build().fetch_optional(pool).await?;
+            row.map(map_entitlement).transpose()
+        })
     }
 
     #[allow(dead_code)]
@@ -62,35 +37,22 @@ impl Database {
         &self,
         entitlement: &EntitlementRecord,
     ) -> Result<(), sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_insert_entitlement_query::<sqlx::Postgres>(entitlement);
-                builder.build().execute(pool).await?;
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_insert_entitlement_query::<sqlx::Sqlite>(entitlement);
-                builder.build().execute(pool).await?;
-            }
-        }
-        Ok(())
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_insert_entitlement_query::<Db>(entitlement);
+            builder.build().execute(pool).await?;
+            Ok(())
+        })
     }
 
     pub async fn update_entitlement(
         &self,
         entitlement: &EntitlementRecord,
     ) -> Result<u64, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_update_entitlement_query::<sqlx::Postgres>(entitlement);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_update_entitlement_query::<sqlx::Sqlite>(entitlement);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_update_entitlement_query::<Db>(entitlement);
+            let result = builder.build().execute(pool).await?;
+            Ok(result.rows_affected())
+        })
     }
 
     pub async fn delete_entitlement(
@@ -98,20 +60,11 @@ impl Database {
         customer_id: &str,
         entitlement_id: &str,
     ) -> Result<u64, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder =
-                    build_delete_entitlement_query::<sqlx::Postgres>(customer_id, entitlement_id);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-            Database::Sqlite(pool) => {
-                let mut builder =
-                    build_delete_entitlement_query::<sqlx::Sqlite>(customer_id, entitlement_id);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_delete_entitlement_query::<Db>(customer_id, entitlement_id);
+            let result = builder.build().execute(pool).await?;
+            Ok(result.rows_affected())
+        })
     }
 }
 

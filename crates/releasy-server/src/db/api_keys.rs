@@ -9,47 +9,27 @@ impl Database {
         &self,
         key_prefix: &str,
     ) -> Result<Vec<ApiKeyAuthRecord>, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_get_api_keys_by_prefix_query::<sqlx::Postgres>(key_prefix);
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_api_key_auth).collect()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_get_api_keys_by_prefix_query::<sqlx::Sqlite>(key_prefix);
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_api_key_auth).collect()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_get_api_keys_by_prefix_query::<Db>(key_prefix);
+            let rows = builder.build().fetch_all(pool).await?;
+            rows.into_iter().map(map_api_key_auth).collect()
+        })
     }
 
     pub async fn insert_api_key(&self, api_key: &ApiKeyRecord) -> Result<(), sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_insert_api_key_query::<sqlx::Postgres>(api_key);
-                builder.build().execute(pool).await?;
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_insert_api_key_query::<sqlx::Sqlite>(api_key);
-                builder.build().execute(pool).await?;
-            }
-        }
-        Ok(())
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_insert_api_key_query::<Db>(api_key);
+            builder.build().execute(pool).await?;
+            Ok(())
+        })
     }
 
     pub async fn revoke_api_key(&self, key_id: &str, timestamp: i64) -> Result<u64, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_revoke_api_key_query::<sqlx::Postgres>(key_id, timestamp);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_revoke_api_key_query::<sqlx::Sqlite>(key_id, timestamp);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_revoke_api_key_query::<Db>(key_id, timestamp);
+            let result = builder.build().execute(pool).await?;
+            Ok(result.rows_affected())
+        })
     }
 
     pub async fn update_api_key_hash(
@@ -57,19 +37,11 @@ impl Database {
         key_id: &str,
         key_hash: &str,
     ) -> Result<u64, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder =
-                    build_update_api_key_hash_query::<sqlx::Postgres>(key_id, key_hash);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_update_api_key_hash_query::<sqlx::Sqlite>(key_id, key_hash);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_update_api_key_hash_query::<Db>(key_id, key_hash);
+            let result = builder.build().execute(pool).await?;
+            Ok(result.rows_affected())
+        })
     }
 
     pub async fn update_api_key_last_used(
@@ -77,20 +49,11 @@ impl Database {
         key_id: &str,
         timestamp: i64,
     ) -> Result<u64, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder =
-                    build_update_api_key_last_used_query::<sqlx::Postgres>(key_id, timestamp);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-            Database::Sqlite(pool) => {
-                let mut builder =
-                    build_update_api_key_last_used_query::<sqlx::Sqlite>(key_id, timestamp);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_update_api_key_last_used_query::<Db>(key_id, timestamp);
+            let result = builder.build().execute(pool).await?;
+            Ok(result.rows_affected())
+        })
     }
 }
 

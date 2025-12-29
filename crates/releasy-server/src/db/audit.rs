@@ -12,20 +12,11 @@ impl Database {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<AuditEventRecord>, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder =
-                    build_list_audit_events_query::<sqlx::Postgres>(filter, limit, offset);
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_audit_event).collect()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder =
-                    build_list_audit_events_query::<sqlx::Sqlite>(filter, limit, offset);
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_audit_event).collect()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_list_audit_events_query::<Db>(filter, limit, offset);
+            let rows = builder.build().fetch_all(pool).await?;
+            rows.into_iter().map(map_audit_event).collect()
+        })
     }
 
     pub async fn insert_audit_event(
@@ -37,31 +28,18 @@ impl Database {
         created_at: i64,
     ) -> Result<(), sqlx::Error> {
         let id = Uuid::new_v4().to_string();
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_insert_audit_event_query::<sqlx::Postgres>(
-                    &id,
-                    customer_id,
-                    actor,
-                    event,
-                    payload,
-                    created_at,
-                );
-                builder.build().execute(pool).await?;
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_insert_audit_event_query::<sqlx::Sqlite>(
-                    &id,
-                    customer_id,
-                    actor,
-                    event,
-                    payload,
-                    created_at,
-                );
-                builder.build().execute(pool).await?;
-            }
-        }
-        Ok(())
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_insert_audit_event_query::<Db>(
+                &id,
+                customer_id,
+                actor,
+                event,
+                payload,
+                created_at,
+            );
+            builder.build().execute(pool).await?;
+            Ok(())
+        })
     }
 }
 

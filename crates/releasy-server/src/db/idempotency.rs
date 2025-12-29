@@ -3,7 +3,7 @@ use std::borrow::Cow;
 
 use crate::models::IdempotencyRecord;
 
-use super::{Database, sql};
+use super::{Database, DbDialect, sql};
 
 impl Database {
     pub async fn get_idempotency_key(
@@ -11,60 +11,40 @@ impl Database {
         key: &str,
         endpoint: &str,
     ) -> Result<Option<IdempotencyRecord>, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_get_idempotency_query::<sqlx::Postgres>(key, endpoint);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_idempotency).transpose()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_get_idempotency_query::<sqlx::Sqlite>(key, endpoint);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_idempotency).transpose()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_get_idempotency_query::<Db>(key, endpoint);
+            let row = builder.build().fetch_optional(pool).await?;
+            row.map(map_idempotency).transpose()
+        })
     }
 
     pub async fn insert_idempotency_key(
         &self,
         record: &IdempotencyRecord,
     ) -> Result<u64, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let base_sql = insert_idempotency_base_sql(false);
-                let mut builder =
-                    build_insert_idempotency_query::<sqlx::Postgres>(base_sql.as_ref(), record);
-                builder.push(sql::idempotency::INSERT_CONFLICT_SUFFIX);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-            Database::Sqlite(pool) => {
-                let base_sql = insert_idempotency_base_sql(true);
-                let mut builder =
-                    build_insert_idempotency_query::<sqlx::Sqlite>(base_sql.as_ref(), record);
+        crate::with_db!(self, |pool, Db| {
+            let ignore_conflicts = <Db as DbDialect>::IS_SQLITE;
+            let base_sql = insert_idempotency_base_sql(ignore_conflicts);
+            let mut builder = build_insert_idempotency_query::<Db>(base_sql.as_ref(), record);
+            if ignore_conflicts {
                 builder.push(")");
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
+            } else {
+                builder.push(sql::idempotency::INSERT_CONFLICT_SUFFIX);
             }
-        }
+            let result = builder.build().execute(pool).await?;
+            Ok(result.rows_affected())
+        })
     }
 
     pub async fn update_idempotency_key(
         &self,
         record: &IdempotencyRecord,
     ) -> Result<u64, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_update_idempotency_query::<sqlx::Postgres>(record);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_update_idempotency_query::<sqlx::Sqlite>(record);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_update_idempotency_query::<Db>(record);
+            let result = builder.build().execute(pool).await?;
+            Ok(result.rows_affected())
+        })
     }
 
     pub async fn delete_idempotency_key(
@@ -72,18 +52,11 @@ impl Database {
         key: &str,
         endpoint: &str,
     ) -> Result<u64, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_delete_idempotency_query::<sqlx::Postgres>(key, endpoint);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_delete_idempotency_query::<sqlx::Sqlite>(key, endpoint);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_delete_idempotency_query::<Db>(key, endpoint);
+            let result = builder.build().execute(pool).await?;
+            Ok(result.rows_affected())
+        })
     }
 }
 

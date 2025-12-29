@@ -6,47 +6,27 @@ use super::{Database, sql};
 
 impl Database {
     pub async fn customer_exists(&self, customer_id: &str) -> Result<bool, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_customer_exists_query::<sqlx::Postgres>(customer_id);
-                let row = builder.build().fetch_optional(pool).await?;
-                Ok(row.is_some())
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_customer_exists_query::<sqlx::Sqlite>(customer_id);
-                let row = builder.build().fetch_optional(pool).await?;
-                Ok(row.is_some())
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_customer_exists_query::<Db>(customer_id);
+            let row = builder.build().fetch_optional(pool).await?;
+            Ok(row.is_some())
+        })
     }
 
     pub async fn insert_customer(&self, customer: &Customer) -> Result<(), sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_insert_customer_query::<sqlx::Postgres>(customer);
-                builder.build().execute(pool).await?;
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_insert_customer_query::<sqlx::Sqlite>(customer);
-                builder.build().execute(pool).await?;
-            }
-        }
-        Ok(())
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_insert_customer_query::<Db>(customer);
+            builder.build().execute(pool).await?;
+            Ok(())
+        })
     }
 
     pub async fn get_customer(&self, customer_id: &str) -> Result<Option<Customer>, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_get_customer_query::<sqlx::Postgres>(customer_id);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_customer).transpose()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_get_customer_query::<sqlx::Sqlite>(customer_id);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_customer).transpose()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_get_customer_query::<Db>(customer_id);
+            let row = builder.build().fetch_optional(pool).await?;
+            row.map(map_customer).transpose()
+        })
     }
 }
 

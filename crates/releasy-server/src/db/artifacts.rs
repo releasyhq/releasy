@@ -6,54 +6,33 @@ use super::{Database, sql};
 
 impl Database {
     pub async fn insert_artifact(&self, artifact: &ArtifactRecord) -> Result<(), sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_insert_artifact_query::<sqlx::Postgres>(artifact);
-                builder.build().execute(pool).await?;
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_insert_artifact_query::<sqlx::Sqlite>(artifact);
-                builder.build().execute(pool).await?;
-            }
-        }
-        Ok(())
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_insert_artifact_query::<Db>(artifact);
+            builder.build().execute(pool).await?;
+            Ok(())
+        })
     }
 
     pub async fn list_artifacts_by_release(
         &self,
         release_id: &str,
     ) -> Result<Vec<ArtifactRecord>, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder =
-                    build_list_artifacts_by_release_query::<sqlx::Postgres>(release_id);
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_artifact).collect()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_list_artifacts_by_release_query::<sqlx::Sqlite>(release_id);
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_artifact).collect()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_list_artifacts_by_release_query::<Db>(release_id);
+            let rows = builder.build().fetch_all(pool).await?;
+            rows.into_iter().map(map_artifact).collect()
+        })
     }
 
     pub async fn get_artifact(
         &self,
         artifact_id: &str,
     ) -> Result<Option<ArtifactRecord>, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_get_artifact_query::<sqlx::Postgres>(artifact_id);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_artifact).transpose()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_get_artifact_query::<sqlx::Sqlite>(artifact_id);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_artifact).transpose()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_get_artifact_query::<Db>(artifact_id);
+            let row = builder.build().fetch_optional(pool).await?;
+            row.map(map_artifact).transpose()
+        })
     }
 }
 

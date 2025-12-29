@@ -6,35 +6,22 @@ use super::{Database, sql};
 
 impl Database {
     pub async fn insert_release(&self, release: &ReleaseRecord) -> Result<(), sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_insert_release_query::<sqlx::Postgres>(release);
-                builder.build().execute(pool).await?;
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_insert_release_query::<sqlx::Sqlite>(release);
-                builder.build().execute(pool).await?;
-            }
-        }
-        Ok(())
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_insert_release_query::<Db>(release);
+            builder.build().execute(pool).await?;
+            Ok(())
+        })
     }
 
     pub async fn get_release(
         &self,
         release_id: &str,
     ) -> Result<Option<ReleaseRecord>, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_get_release_query::<sqlx::Postgres>(release_id);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_release).transpose()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_get_release_query::<sqlx::Sqlite>(release_id);
-                let row = builder.build().fetch_optional(pool).await?;
-                row.map(map_release).transpose()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_get_release_query::<Db>(release_id);
+            let row = builder.build().fetch_optional(pool).await?;
+            row.map(map_release).transpose()
+        })
     }
 
     pub async fn list_releases(
@@ -45,22 +32,12 @@ impl Database {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<ReleaseRecord>, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = Database::build_list_releases_query::<sqlx::Postgres>(
-                    product, status, version, limit, offset,
-                );
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_release).collect()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = Database::build_list_releases_query::<sqlx::Sqlite>(
-                    product, status, version, limit, offset,
-                );
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_release).collect()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder =
+                Database::build_list_releases_query::<Db>(product, status, version, limit, offset);
+            let rows = builder.build().fetch_all(pool).await?;
+            rows.into_iter().map(map_release).collect()
+        })
     }
 
     pub async fn list_published_releases_for_products(
@@ -74,22 +51,13 @@ impl Database {
             return Ok(Vec::new());
         }
 
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_list_published_releases_for_products_query::<sqlx::Postgres>(
-                    products, version, limit, offset,
-                );
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_release).collect()
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_list_published_releases_for_products_query::<sqlx::Sqlite>(
-                    products, version, limit, offset,
-                );
-                let rows = builder.build().fetch_all(pool).await?;
-                rows.into_iter().map(map_release).collect()
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_list_published_releases_for_products_query::<Db>(
+                products, version, limit, offset,
+            );
+            let rows = builder.build().fetch_all(pool).await?;
+            rows.into_iter().map(map_release).collect()
+        })
     }
 
     pub async fn update_release_status(
@@ -99,43 +67,24 @@ impl Database {
         published_at: Option<i64>,
         expected_status: Option<&str>,
     ) -> Result<u64, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_update_release_status_query::<sqlx::Postgres>(
-                    release_id,
-                    status,
-                    published_at,
-                    expected_status,
-                );
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_update_release_status_query::<sqlx::Sqlite>(
-                    release_id,
-                    status,
-                    published_at,
-                    expected_status,
-                );
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_update_release_status_query::<Db>(
+                release_id,
+                status,
+                published_at,
+                expected_status,
+            );
+            let result = builder.build().execute(pool).await?;
+            Ok(result.rows_affected())
+        })
     }
 
     pub async fn delete_release(&self, release_id: &str) -> Result<u64, sqlx::Error> {
-        match self {
-            Database::Postgres(pool) => {
-                let mut builder = build_delete_release_query::<sqlx::Postgres>(release_id);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-            Database::Sqlite(pool) => {
-                let mut builder = build_delete_release_query::<sqlx::Sqlite>(release_id);
-                let result = builder.build().execute(pool).await?;
-                Ok(result.rows_affected())
-            }
-        }
+        crate::with_db!(self, |pool, Db| {
+            let mut builder = build_delete_release_query::<Db>(release_id);
+            let result = builder.build().execute(pool).await?;
+            Ok(result.rows_affected())
+        })
     }
 
     pub(super) fn build_list_releases_query<'args, DB>(
