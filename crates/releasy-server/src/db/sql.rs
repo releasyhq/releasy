@@ -99,18 +99,12 @@ pub(in crate::db) mod idempotency {
         env!("CARGO_MANIFEST_DIR"),
         "/sql/idempotency/get.sql"
     ));
-    pub(in crate::db) const INSERT_POSTGRES: &str = include_str!(concat!(
+    pub(in crate::db) const INSERT_BASE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/sql/idempotency/insert_postgres.sql"
+        "/sql/idempotency/insert_base.sql"
     ));
-    pub(in crate::db) const INSERT_POSTGRES_SUFFIX: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/sql/idempotency/insert_postgres_suffix.sql"
-    ));
-    pub(in crate::db) const INSERT_SQLITE: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/sql/idempotency/insert_sqlite.sql"
-    ));
+    pub(in crate::db) const INSERT_CONFLICT_SUFFIX: &str =
+        ") ON CONFLICT (idempotency_key, endpoint) DO NOTHING";
     pub(in crate::db) const UPDATE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/sql/idempotency/update.sql"

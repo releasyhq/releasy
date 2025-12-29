@@ -1,4 +1,5 @@
 use sqlx::QueryBuilder;
+use std::borrow::Cow;
 
 use crate::models::IdempotencyRecord;
 
@@ -30,19 +31,17 @@ impl Database {
     ) -> Result<u64, sqlx::Error> {
         match self {
             Database::Postgres(pool) => {
-                let mut builder = build_insert_idempotency_query::<sqlx::Postgres>(
-                    sql::idempotency::INSERT_POSTGRES,
-                    record,
-                );
-                builder.push(sql::idempotency::INSERT_POSTGRES_SUFFIX);
+                let base_sql = insert_idempotency_base_sql(false);
+                let mut builder =
+                    build_insert_idempotency_query::<sqlx::Postgres>(base_sql.as_ref(), record);
+                builder.push(sql::idempotency::INSERT_CONFLICT_SUFFIX);
                 let result = builder.build().execute(pool).await?;
                 Ok(result.rows_affected())
             }
             Database::Sqlite(pool) => {
-                let mut builder = build_insert_idempotency_query::<sqlx::Sqlite>(
-                    sql::idempotency::INSERT_SQLITE,
-                    record,
-                );
+                let base_sql = insert_idempotency_base_sql(true);
+                let mut builder =
+                    build_insert_idempotency_query::<sqlx::Sqlite>(base_sql.as_ref(), record);
                 builder.push(")");
                 let result = builder.build().execute(pool).await?;
                 Ok(result.rows_affected())
@@ -103,7 +102,7 @@ where
 }
 
 fn build_insert_idempotency_query<'args, DB>(
-    base_sql: &'static str,
+    base_sql: &'args str,
     record: &'args IdempotencyRecord,
 ) -> QueryBuilder<'args, DB>
 where
@@ -124,6 +123,18 @@ where
     separated.push_bind(record.created_at);
     separated.push_bind(record.expires_at);
     builder
+}
+
+fn insert_idempotency_base_sql(ignore_conflicts: bool) -> Cow<'static, str> {
+    if ignore_conflicts {
+        Cow::Owned(sql::idempotency::INSERT_BASE.replacen(
+            "INSERT INTO",
+            "INSERT OR IGNORE INTO",
+            1,
+        ))
+    } else {
+        Cow::Borrowed(sql::idempotency::INSERT_BASE)
+    }
 }
 
 fn build_update_idempotency_query<'args, DB>(
