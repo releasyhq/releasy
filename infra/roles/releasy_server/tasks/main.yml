@@ -224,7 +224,7 @@
     dest: "{{ releasy_extra_ip_netplan_path | default('/etc/netplan/99-releasy-floating-ip.yaml') }}"
     owner: root
     group: root
-    mode: "0644"
+    mode: "0600"
   notify: Apply netplan
   when:
     - releasy_extra_ip is defined
