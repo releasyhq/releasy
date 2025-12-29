@@ -301,3 +301,33 @@ jobs:
           target_commitish: ${{ github.sha }}
           body_path: RELEASE_NOTES.md
           files: dist/**/*
+
+  release-releasy:
+    name: "release: releasy"
+    if: needs.prepare.outputs.mode == 'tag'
+    needs: [ prepare, build-assets, release-github ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.checkout_ref }}
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: releasy-server-linux
+          path: dist
+
+      - name: Publish to Releasy
+        env:
+          RELEASY_BASE_URL: ${{ vars.RELEASY_BASE_URL || 'https://test.releasyhq.com' }}
+          RELEASY_ADMIN_API_KEY: ${{ secrets.RELEASY_ADMIN_API_KEY }}
+          RELEASY_PRODUCT: releasy-server
+          RELEASY_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASY_PLATFORM: linux-x86_64
+          RELEASY_FILE: dist/releasy-server-linux-x86_64.tar.gz
+        run: scripts/publish-releasy-release.sh
