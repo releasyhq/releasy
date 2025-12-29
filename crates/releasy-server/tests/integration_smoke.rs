@@ -363,6 +363,86 @@ async fn create_release_idempotency_conflict() {
 }
 
 #[tokio::test]
+async fn list_releases_requires_scope() {
+    let (app, db) = setup_app().await;
+
+    let customer_id = create_customer(&app, "Scope Co").await;
+    let (_key_id, api_key) = insert_api_key(&db, &customer_id, &["downloads:token"]).await;
+    let api_key_headers = [("x-releasy-api-key", api_key.as_str())];
+
+    let response = send_empty(&app, "GET", "/v1/releases", &api_key_headers).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn list_releases_respects_entitlement_window() {
+    let (app, db) = setup_app().await;
+
+    let customer_id = create_customer(&app, "Entitled Customer").await;
+    let release_id = create_release(&app, "releasy", "3.3.0").await;
+    publish_release(&app, &release_id).await;
+
+    let (_key_id, api_key) = insert_api_key(&db, &customer_id, &["releases:read"]).await;
+    let api_key_headers = [("x-releasy-api-key", api_key.as_str())];
+
+    let now = now_ts();
+    create_entitlement(&app, &customer_id, "releasy", now + 3_600).await;
+
+    let response = send_empty(
+        &app,
+        "GET",
+        "/v1/releases?status=published",
+        &api_key_headers,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    let releases = body
+        .get("releases")
+        .and_then(Value::as_array)
+        .expect("releases list");
+    assert!(releases.is_empty());
+
+    create_entitlement(&app, &customer_id, "releasy", now - 60).await;
+
+    let response = send_empty(
+        &app,
+        "GET",
+        "/v1/releases?status=published",
+        &api_key_headers,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    let releases = body
+        .get("releases")
+        .and_then(Value::as_array)
+        .expect("releases list");
+    assert_eq!(releases.len(), 1);
+}
+
+#[tokio::test]
+async fn release_publish_and_unpublish_flow() {
+    let (app, db) = setup_app().await;
+
+    let release_id = create_release(&app, "releasy", "3.4.0").await;
+
+    let publish_uri = format!("/v1/releases/{release_id}/publish");
+    let response = send_empty(&app, "POST", &publish_uri, &[ADMIN_KEY_HEADER]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let release = db.get_release(&release_id).await.expect("get release");
+    assert_eq!(release.expect("release").status, "published");
+
+    let unpublish_uri = format!("/v1/releases/{release_id}/unpublish");
+    let response = send_empty(&app, "POST", &unpublish_uri, &[ADMIN_KEY_HEADER]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let release = db.get_release(&release_id).await.expect("get release");
+    assert_eq!(release.expect("release").status, "draft");
+}
+
+#[tokio::test]
 async fn admin_create_customer_and_list_entitlements() {
     let (app, db) = setup_app().await;
 
