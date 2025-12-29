@@ -137,3 +137,48 @@ fn entitlements_migration_uses_bigint_columns() {
         "unexpected INTEGER starts_at in {path:?}"
     );
 }
+
+#[test]
+fn bigint_migration_includes_expected_columns() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/0014_bigint_columns.sql");
+    let sql = fs::read_to_string(&path).expect("read bigint migration");
+
+    for needle in [
+        "customers_new",
+        "created_at BIGINT NOT NULL",
+        "suspended_at BIGINT",
+        "releases_new",
+        "published_at BIGINT",
+        "artifacts_new",
+        "size BIGINT NOT NULL",
+        "download_tokens_new",
+        "expires_at BIGINT NOT NULL",
+        "api_keys_new",
+        "last_used_at BIGINT",
+        "entitlements_new",
+        "starts_at BIGINT NOT NULL",
+        "audit_events_new",
+        "idempotency_keys_new",
+    ] {
+        assert!(sql.contains(needle), "expected {needle} in {path:?}");
+    }
+}
+
+#[test]
+fn bigint_migration_avoids_integer_timestamps() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/0014_bigint_columns.sql");
+    let sql = fs::read_to_string(&path).expect("read bigint migration");
+
+    for needle in [
+        "created_at INTEGER",
+        "expires_at INTEGER",
+        "published_at INTEGER",
+        "starts_at INTEGER",
+        "ends_at INTEGER",
+        "size INTEGER",
+    ] {
+        assert!(!sql.contains(needle), "unexpected {needle} in {path:?}");
+    }
+}
