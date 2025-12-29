@@ -39,3 +39,5 @@ Optional:
 - `RELEASY_ENTITLEMENT_STARTS_AT` (unix seconds, default: now)
 - `RELEASY_ENTITLEMENT_ENDS_AT` (unix seconds or `null`)
 - `RELEASY_ENTITLEMENT_METADATA` (JSON object)
+- `RELEASY_CURL_OPTS` (extra curl flags, e.g. timeouts)
+- `RELEASY_DEBUG=1` (print request status and body)

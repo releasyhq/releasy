@@ -40,6 +40,8 @@ RELEASY_KEY_EXPIRES_AT="${RELEASY_KEY_EXPIRES_AT:-}"
 RELEASY_ENTITLEMENT_STARTS_AT="${RELEASY_ENTITLEMENT_STARTS_AT:-}"
 RELEASY_ENTITLEMENT_ENDS_AT="${RELEASY_ENTITLEMENT_ENDS_AT:-}"
 RELEASY_ENTITLEMENT_METADATA="${RELEASY_ENTITLEMENT_METADATA:-}"
+RELEASY_CURL_OPTS="${RELEASY_CURL_OPTS:-}"
+RELEASY_DEBUG="${RELEASY_DEBUG:-}"
 
 if [ -z "$RELEASY_ENTITLEMENT_STARTS_AT" ]; then
   RELEASY_ENTITLEMENT_STARTS_AT="$(date +%s)"
@@ -62,7 +64,11 @@ request() {
   local idempotency="${4:-}"
   local url="${RELEASY_BASE_URL}${path}"
   local tmp
+  local err
+  local curl_exit
+  local curl_opts=()
   tmp="$(mktemp)"
+  err="$(mktemp)"
 
   local args=(
     -sS
@@ -80,9 +86,28 @@ request() {
     args+=(-H "content-type: application/json" -d "$data")
   fi
 
-  RESP_STATUS="$(curl "${args[@]}" "$url")"
-  RESP_BODY="$(cat "$tmp")"
+  if [ -n "$RELEASY_CURL_OPTS" ]; then
+    # shellcheck disable=SC2206
+    curl_opts=($RELEASY_CURL_OPTS)
+  fi
+
+  set +e
+  RESP_STATUS="$(curl "${args[@]}" "${curl_opts[@]}" "$url" 2>"$err")"
+  curl_exit=$?
+  set -e
+
+  RESP_BODY="$(cat "$tmp" 2>/dev/null || true)"
   rm -f "$tmp"
+  rm -f "$err"
+
+  if [ "$curl_exit" -ne 0 ]; then
+    die "request failed (curl exit $curl_exit) for $method $url"
+  fi
+
+  if [ "$RELEASY_DEBUG" = "1" ]; then
+    log "DEBUG: ${method} ${url} -> ${RESP_STATUS}"
+    log "DEBUG: response body: ${RESP_BODY}"
+  fi
 }
 
 json_get() {
@@ -92,7 +117,16 @@ import json
 import sys
 
 key = sys.argv[1]
-data = json.load(sys.stdin)
+raw = sys.stdin.read()
+if not raw.strip():
+    raise SystemExit("empty response body")
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    snippet = raw.strip().replace("\n", " ")
+    if len(snippet) > 200:
+        snippet = snippet[:200] + "..."
+    raise SystemExit(f"response was not JSON: {snippet}")
 if key not in data:
     raise SystemExit(f"missing key: {key}")
 value = data[key]
@@ -108,8 +142,11 @@ json_error_message() {
 import json
 import sys
 
+raw = sys.stdin.read()
+if not raw.strip():
+    sys.exit(0)
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(raw)
 except json.JSONDecodeError:
     sys.exit(0)
 error = data.get("error") or {}
