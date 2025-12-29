@@ -213,6 +213,46 @@ async fn api_key_last_used(db: &Database, key_id: &str) -> Option<i64> {
 }
 
 #[tokio::test]
+async fn admin_endpoints_require_admin_key() {
+    let (app, db) = setup_app().await;
+
+    let response = send_json(
+        &app,
+        "POST",
+        "/v1/admin/customers",
+        &[],
+        json!({ "name": "No Auth" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = send_json(
+        &app,
+        "POST",
+        "/v1/admin/customers",
+        &[("x-releasy-admin-key", "wrong")],
+        json!({ "name": "Bad Auth" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = send_json(
+        &app,
+        "POST",
+        "/v1/admin/customers",
+        &[ADMIN_KEY_HEADER],
+        json!({ "name": "Good Auth" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response_json(response).await;
+    let customer_id = body.get("id").and_then(Value::as_str).expect("customer id");
+    let customer = db.get_customer(customer_id).await.expect("get customer");
+    assert!(customer.is_some());
+}
+
+#[tokio::test]
 async fn create_release_requires_admin_key() {
     let (app, db) = setup_app().await;
 
@@ -257,6 +297,69 @@ async fn create_release_inserts_release() {
     assert_eq!(release.product, "releasy");
     assert_eq!(release.version, "1.2.3");
     assert_eq!(release.status, "draft");
+}
+
+#[tokio::test]
+async fn create_release_idempotency_reuses_response() {
+    let (app, db) = setup_app().await;
+    let headers = [ADMIN_KEY_HEADER, ("idempotency-key", "release-idem-1")];
+
+    let response = send_json(
+        &app,
+        "POST",
+        "/v1/releases",
+        &headers,
+        json!({ "product": "releasy", "version": "3.1.0" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let first = response_json(response).await;
+    let first_id = first.get("id").and_then(Value::as_str).expect("id");
+
+    let response = send_json(
+        &app,
+        "POST",
+        "/v1/releases",
+        &headers,
+        json!({ "product": "releasy", "version": "3.1.0" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let second = response_json(response).await;
+    let second_id = second.get("id").and_then(Value::as_str).expect("id");
+    assert_eq!(first_id, second_id);
+
+    let releases = db
+        .list_releases(Some("releasy"), None, Some("3.1.0"), 10, 0)
+        .await
+        .expect("list releases");
+    assert_eq!(releases.len(), 1);
+}
+
+#[tokio::test]
+async fn create_release_idempotency_conflict() {
+    let (app, _db) = setup_app().await;
+    let headers = [ADMIN_KEY_HEADER, ("idempotency-key", "release-idem-2")];
+
+    let response = send_json(
+        &app,
+        "POST",
+        "/v1/releases",
+        &headers,
+        json!({ "product": "releasy", "version": "3.2.0" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = send_json(
+        &app,
+        "POST",
+        "/v1/releases",
+        &headers,
+        json!({ "product": "releasy", "version": "3.2.1" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]
@@ -402,4 +505,50 @@ async fn list_releases_for_customer_includes_published_release() {
         releases[0].get("status").and_then(Value::as_str),
         Some("published")
     );
+}
+
+#[tokio::test]
+async fn download_token_expired_returns_not_found() {
+    let (app, db) = setup_app().await;
+
+    let customer_id = create_customer(&app, "Download Customer").await;
+    let release_id = create_release(&app, "releasy", "4.0.0").await;
+
+    sqlx::query(
+        "INSERT INTO artifacts (id, release_id, object_key, checksum, size, platform, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("artifact-1")
+    .bind(&release_id)
+    .bind("releasy/4.0.0/artifact-1.tar.gz")
+    .bind("deadbeef")
+    .bind(123_i64)
+    .bind("linux-x86_64")
+    .bind(now_ts())
+    .execute(sqlite_pool(&db))
+    .await
+    .expect("insert artifact");
+
+    let token = auth::generate_download_token().expect("download token");
+    let token_hash = auth::hash_download_token(&token, None);
+    let expires_at = now_ts() - 30;
+    let created_at = expires_at - 60;
+
+    sqlx::query(
+        "INSERT INTO download_tokens (token_hash, artifact_id, customer_id, purpose, \
+         expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&token_hash)
+    .bind("artifact-1")
+    .bind(&customer_id)
+    .bind(None::<String>)
+    .bind(expires_at)
+    .bind(created_at)
+    .execute(sqlite_pool(&db))
+    .await
+    .expect("insert download token");
+
+    let uri = format!("/v1/downloads/{token}");
+    let response = send_empty(&app, "GET", &uri, &[]).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
