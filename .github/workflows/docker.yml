@@ -57,14 +57,18 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-  build-image:
-    name: "build: image"
+  build-image-amd64:
+    name: "build: image (amd64)"
     needs: prepare
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/docker-build.yml
     with:
+      runner: ubuntu-latest
+      platforms: linux/amd64
+      tag_suffix: -amd64
+      cache_scope: releasy-server-amd64
       push_images: ${{ needs.prepare.outputs.push_images == 'true' }}
       version: ${{ github.ref_name }}
       tags: |
@@ -73,3 +77,85 @@ jobs:
         type=sha,prefix=sha-
         type=raw,value=latest,enable={{is_default_branch}}
       extra_tags: ${{ needs.prepare.outputs.extra_tags }}
+
+  build-image-arm64:
+    name: "build: image (arm64)"
+    needs: prepare
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      runner: ubuntu-24.04-arm
+      platforms: linux/arm64
+      tag_suffix: -arm64
+      cache_scope: releasy-server-arm64
+      push_images: ${{ needs.prepare.outputs.push_images == 'true' }}
+      version: ${{ github.ref_name }}
+      tags: |
+        type=ref,event=branch
+        type=ref,event=tag
+        type=sha,prefix=sha-
+        type=raw,value=latest,enable={{is_default_branch}}
+      extra_tags: ${{ needs.prepare.outputs.extra_tags }}
+
+  build-image-manifest:
+    name: "build: image (manifest)"
+    needs:
+      - prepare
+      - build-image-amd64
+      - build-image-arm64
+    if: needs.prepare.outputs.push_images == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Resolve image name
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_name="${{ vars.DOCKER_IMAGE }}"
+          if [ -z "$image_name" ]; then
+            image_name="ghcr.io/${GITHUB_REPOSITORY}"
+          fi
+          echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.image_name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Create manifest list
+        shell: bash
+        run: |
+          set -euo pipefail
+          tags=$(cat <<'EOF'
+          ${{ steps.meta.outputs.tags }}
+          ${{ needs.prepare.outputs.extra_tags }}
+          EOF
+          )
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            docker buildx imagetools create \
+              -t "$tag" \
+              "${tag}-amd64" \
+              "${tag}-arm64"
+          done <<< "$tags"

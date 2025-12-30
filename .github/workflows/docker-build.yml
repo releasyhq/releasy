@@ -3,6 +3,14 @@ name: Docker Build (Reusable)
 on:
   workflow_call:
     inputs:
+      runner:
+        type: string
+        required: false
+        default: "ubuntu-latest"
+      platforms:
+        type: string
+        required: false
+        default: "linux/amd64,linux/arm64"
       image_name:
         type: string
         required: false
@@ -16,6 +24,10 @@ on:
         required: false
         default: ""
       cache_scope:
+        type: string
+        required: false
+        default: ""
+      tag_suffix:
         type: string
         required: false
         default: ""
@@ -47,7 +59,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout
         if: inputs.checkout_ref == ''
@@ -120,6 +132,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Setup QEMU
+        if: contains(inputs.platforms, ',')
         uses: docker/setup-qemu-action@v3
 
       - name: Setup Docker Buildx
@@ -140,21 +153,44 @@ jobs:
           images: ${{ steps.docker.outputs.image_name }}
           tags: ${{ inputs.tags }}
 
+      - name: Apply tag suffix
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          suffix="${{ inputs.tag_suffix }}"
+          tags="${{ steps.meta.outputs.tags }}"
+          extra="${{ inputs.extra_tags }}"
+          if [ -n "$suffix" ]; then
+            tags="$(printf '%s\n' "$tags" | sed "s|$|$suffix|")"
+            if [ -n "$extra" ]; then
+              extra="$(printf '%s\n' "$extra" | sed "s|$|$suffix|")"
+            fi
+          fi
+          {
+            echo "tags<<EOF"
+            echo "$tags"
+            echo "EOF"
+            echo "extra_tags<<EOF"
+            echo "$extra"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build (no push)
         if: inputs.push_images != true
         uses: docker/build-push-action@v5
         with:
           context: ${{ steps.docker.outputs.context }}
           file: ${{ steps.docker.outputs.dockerfile }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ inputs.platforms }}
           push: false
           build-args: |
             RELEASY_VERSION=${{ inputs.version }}
             RELEASY_BUILD=${{ steps.build-sha.outputs.sha }}
             ${{ steps.docker.outputs.extra_build_args }}
           tags: |
-            ${{ steps.meta.outputs.tags }}
-            ${{ inputs.extra_tags }}
+            ${{ steps.tags.outputs.tags }}
+            ${{ steps.tags.outputs.extra_tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ steps.docker.outputs.cache_scope }}
 
@@ -164,15 +200,15 @@ jobs:
         with:
           context: ${{ steps.docker.outputs.context }}
           file: ${{ steps.docker.outputs.dockerfile }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ inputs.platforms }}
           push: true
           build-args: |
             RELEASY_VERSION=${{ inputs.version }}
             RELEASY_BUILD=${{ steps.build-sha.outputs.sha }}
             ${{ steps.docker.outputs.extra_build_args }}
           tags: |
-            ${{ steps.meta.outputs.tags }}
-            ${{ inputs.extra_tags }}
+            ${{ steps.tags.outputs.tags }}
+            ${{ steps.tags.outputs.extra_tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ steps.docker.outputs.cache_scope }}
           cache-to: type=gha,scope=${{ steps.docker.outputs.cache_scope }},mode=max
