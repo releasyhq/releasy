@@ -118,7 +118,7 @@ jobs:
             releasy_platform: linux-x86_64
             binary: releasy-server
             archive: tar.gz
-          - os: ubuntu-24.04-arm64
+          - os: ubuntu-24.04-arm
             asset_os: linux
             asset_arch: arm64
             target: aarch64-unknown-linux-gnu
