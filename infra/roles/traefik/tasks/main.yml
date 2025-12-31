@@ -22,7 +22,7 @@
       - traefik_arch | length > 0
     quiet: true
     fail_msg: >-
-      Unsupported architecture {{ ansible_architecture }} for Traefik.
+      Unsupported architecture {{ ansible_facts['architecture'] }} for Traefik.
       Set traefik_arch explicitly to a supported value (amd64/arm64).
 
 - name: Install system packages
