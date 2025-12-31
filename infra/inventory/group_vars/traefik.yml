@@ -1,7 +1,6 @@
 # Traefik host settings.
 
 traefik_version: "3.1.6"
-traefik_arch: "amd64"
 traefik_log_level: "INFO"
 traefik_acme_email: "ops@example.com"
 traefik_rate_limit_average: 1

@@ -6,6 +6,25 @@
       - traefik_acme_email is defined
     quiet: true
 
+- name: Resolve Traefik architecture
+  ansible.builtin.set_fact:
+    traefik_arch: "{{ traefik_arch | default(_traefik_arch_map.get(ansible_architecture, '')) }}"
+  vars:
+    _traefik_arch_map:
+      aarch64: arm64
+      arm64: arm64
+      amd64: amd64
+      x86_64: amd64
+
+- name: Assert Traefik architecture is supported
+  ansible.builtin.assert:
+    that:
+      - traefik_arch | length > 0
+    quiet: true
+    fail_msg: >-
+      Unsupported architecture {{ ansible_architecture }} for Traefik.
+      Set traefik_arch explicitly to a supported value (amd64/arm64).
+
 - name: Install system packages
   ansible.builtin.apt:
     name:
@@ -43,12 +62,12 @@
 - name: Download Traefik
   ansible.builtin.get_url:
     url: "https://github.com/traefik/traefik/releases/download/v{{ traefik_version }}/traefik_v{{ traefik_version }}_linux_{{ traefik_arch }}.tar.gz"
-    dest: "/tmp/traefik_{{ traefik_version }}.tar.gz"
+    dest: "/tmp/traefik_{{ traefik_version }}_{{ traefik_arch }}.tar.gz"
     mode: "0644"
 
 - name: Ensure Traefik extract directory
   ansible.builtin.file:
-    path: "/tmp/traefik_{{ traefik_version }}"
+    path: "/tmp/traefik_{{ traefik_version }}_{{ traefik_arch }}"
     state: directory
     owner: root
     group: root
@@ -56,14 +75,14 @@
 
 - name: Extract Traefik
   ansible.builtin.unarchive:
-    src: "/tmp/traefik_{{ traefik_version }}.tar.gz"
-    dest: "/tmp/traefik_{{ traefik_version }}"
+    src: "/tmp/traefik_{{ traefik_version }}_{{ traefik_arch }}.tar.gz"
+    dest: "/tmp/traefik_{{ traefik_version }}_{{ traefik_arch }}"
     remote_src: true
-    creates: "/tmp/traefik_{{ traefik_version }}/traefik"
+    creates: "/tmp/traefik_{{ traefik_version }}_{{ traefik_arch }}/traefik"
 
 - name: Install Traefik binary
   ansible.builtin.copy:
-    src: "/tmp/traefik_{{ traefik_version }}/traefik"
+    src: "/tmp/traefik_{{ traefik_version }}_{{ traefik_arch }}/traefik"
     dest: /usr/local/bin/traefik
     owner: root
     group: root
