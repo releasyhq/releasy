@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::auth::{admin_authorize_with_role, require_admin, require_support_or_admin};
+use crate::db::CustomerUpdate;
 use crate::errors::{ApiError, ErrorBody};
 use crate::models::Customer;
 
@@ -24,6 +25,13 @@ pub(crate) struct AdminCreateCustomerResponse {
     pub(crate) name: String,
     pub(crate) plan: Option<String>,
     pub(crate) created_at: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
+pub(crate) struct AdminUpdateCustomerRequest {
+    pub(crate) name: Option<String>,
+    pub(crate) plan: Option<Option<String>>,
+    pub(crate) suspended: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -246,6 +254,107 @@ pub async fn get_customer(
         .map_err(|err| {
             error!("failed to get customer: {err}");
             ApiError::internal("failed to get customer")
+        })?
+        .ok_or_else(|| ApiError::not_found("customer not found"))?;
+
+    Ok(Json(AdminCustomerResponse::from_customer(customer)))
+}
+
+#[utoipa::path(
+    patch,
+    path = "/v1/admin/customers/{customer_id}",
+    tag = "admin",
+    summary = "Update a customer",
+    description = "Updates customer name, plan, or suspension. Requires platform_admin role.",
+    request_body = AdminUpdateCustomerRequest,
+    params(
+        ("customer_id" = String, Path, description = "Customer identifier")
+    ),
+    responses(
+        (status = 200, description = "Customer updated", body = AdminCustomerResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+        (status = 401, description = "Unauthorized", body = ErrorBody),
+        (status = 403, description = "Forbidden", body = ErrorBody),
+        (status = 404, description = "Customer not found", body = ErrorBody),
+        (status = 503, description = "Admin auth not configured", body = ErrorBody)
+    ),
+    security(
+        ("admin_key" = []),
+        ("operator_jwt" = [])
+    )
+)]
+pub async fn update_customer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(customer_id): Path<String>,
+    Json(payload): Json<AdminUpdateCustomerRequest>,
+) -> Result<Json<AdminCustomerResponse>, ApiError> {
+    let role = admin_authorize_with_role(&headers, &state.settings, &state.jwks_cache).await?;
+    require_admin(role)?;
+
+    let customer_id = customer_id.trim();
+    if customer_id.is_empty() {
+        return Err(ApiError::bad_request("customer_id is required"));
+    }
+
+    let mut has_update = false;
+
+    let name = if let Some(value) = payload.name {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::bad_request("name must not be empty"));
+        }
+        has_update = true;
+        Some(trimmed.to_string())
+    } else {
+        None
+    };
+
+    let plan = match payload.plan {
+        Some(Some(value)) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(ApiError::bad_request("plan must not be empty"));
+            }
+            has_update = true;
+            Some(Some(trimmed.to_string()))
+        }
+        Some(None) => {
+            has_update = true;
+            Some(None)
+        }
+        None => None,
+    };
+
+    let suspended_at = match payload.suspended {
+        Some(true) => {
+            has_update = true;
+            Some(Some(now_ts_or_internal()?))
+        }
+        Some(false) => {
+            has_update = true;
+            Some(None)
+        }
+        None => None,
+    };
+
+    if !has_update {
+        return Err(ApiError::bad_request("at least one field must be provided"));
+    }
+
+    let update = CustomerUpdate {
+        name,
+        plan,
+        suspended_at,
+    };
+
+    let customer = state
+        .db
+        .update_customer(customer_id, &update)
+        .await
+        .map_err(|err| {
+            error!("failed to update customer: {err}");
+            ApiError::internal("failed to update customer")
         })?
         .ok_or_else(|| ApiError::not_found("customer not found"))?;
 

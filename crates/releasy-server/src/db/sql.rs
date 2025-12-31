@@ -62,6 +62,10 @@ pub(in crate::db) mod customers {
         env!("CARGO_MANIFEST_DIR"),
         "/sql/customers/insert.sql"
     ));
+    pub(in crate::db) const UPDATE: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/sql/customers/update.sql"
+    ));
 }
 
 pub(in crate::db) mod download_tokens {

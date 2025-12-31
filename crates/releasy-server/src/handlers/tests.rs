@@ -294,6 +294,82 @@ async fn get_customer_returns_not_found() {
 }
 
 #[tokio::test]
+async fn update_customer_updates_fields_and_suspends() {
+    let state = setup_state().await;
+    let now = now_ts_or_internal().expect("now");
+
+    let customer = Customer {
+        id: "customer-update".to_string(),
+        name: "Customer Update".to_string(),
+        plan: Some("Starter".to_string()),
+        allowed_prefixes: None,
+        created_at: now,
+        suspended_at: None,
+    };
+    state
+        .db
+        .insert_customer(&customer)
+        .await
+        .expect("insert customer");
+
+    let payload = AdminUpdateCustomerRequest {
+        name: Some("Customer Updated".to_string()),
+        plan: Some(None),
+        suspended: Some(true),
+    };
+
+    let Json(response) = update_customer(
+        State(state),
+        admin_headers(),
+        Path(customer.id.clone()),
+        Json(payload),
+    )
+    .await
+    .expect("update customer");
+
+    assert_eq!(response.name, "Customer Updated");
+    assert!(response.plan.is_none());
+    assert!(response.suspended_at.is_some());
+}
+
+#[tokio::test]
+async fn update_customer_rejects_empty_payload() {
+    let state = setup_state().await;
+    let now = now_ts_or_internal().expect("now");
+
+    let customer = Customer {
+        id: "customer-no-update".to_string(),
+        name: "No Update".to_string(),
+        plan: None,
+        allowed_prefixes: None,
+        created_at: now,
+        suspended_at: None,
+    };
+    state
+        .db
+        .insert_customer(&customer)
+        .await
+        .expect("insert customer");
+
+    let payload = AdminUpdateCustomerRequest {
+        name: None,
+        plan: None,
+        suspended: None,
+    };
+
+    let err = update_customer(
+        State(state),
+        admin_headers(),
+        Path(customer.id.clone()),
+        Json(payload),
+    )
+    .await
+    .expect_err("empty update");
+
+    assert_eq!(err.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn create_release_is_idempotent() {
     let state = setup_state().await;
     let mut headers = admin_headers();

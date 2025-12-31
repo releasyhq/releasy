@@ -10,8 +10,8 @@ pub(crate) mod releases;
 
 pub(crate) use admin::{
     AdminCreateCustomerRequest, AdminCreateCustomerResponse, AdminCustomerListQuery,
-    AdminCustomerListResponse, AdminCustomerResponse, admin_create_customer, get_customer,
-    list_customers,
+    AdminCustomerListResponse, AdminCustomerResponse, AdminUpdateCustomerRequest,
+    admin_create_customer, get_customer, list_customers, update_customer,
 };
 pub(crate) use artifacts::{
     ArtifactPresignRequest, ArtifactPresignResponse, ArtifactRegisterRequest,

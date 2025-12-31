@@ -7,7 +7,8 @@ use crate::handlers::{
     create_download_token, create_entitlement, create_release, delete_entitlement, delete_release,
     get_customer, health_check, list_audit_events, list_customers, list_entitlements,
     list_releases, live_check, presign_release_artifact_upload, publish_release, ready_check,
-    register_release_artifact, resolve_download_token, unpublish_release, update_entitlement,
+    register_release_artifact, resolve_download_token, unpublish_release, update_customer,
+    update_entitlement,
 };
 use crate::openapi;
 
@@ -28,7 +29,10 @@ pub fn router(state: AppState) -> Router {
             "/v1/admin/customers",
             post(admin_create_customer).get(list_customers),
         )
-        .route("/v1/admin/customers/{customer_id}", get(get_customer))
+        .route(
+            "/v1/admin/customers/{customer_id}",
+            get(get_customer).patch(update_customer),
+        )
         .route(
             "/v1/admin/customers/{customer_id}/entitlements",
             get(list_entitlements).post(create_entitlement),

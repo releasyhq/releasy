@@ -4,6 +4,19 @@ use crate::models::Customer;
 
 use super::{Database, sql};
 
+#[derive(Debug, Default, Clone)]
+pub struct CustomerUpdate {
+    pub name: Option<String>,
+    pub plan: Option<Option<String>>,
+    pub suspended_at: Option<Option<i64>>,
+}
+
+impl CustomerUpdate {
+    fn is_empty(&self) -> bool {
+        self.name.is_none() && self.plan.is_none() && self.suspended_at.is_none()
+    }
+}
+
 impl Database {
     pub async fn customer_exists(&self, customer_id: &str) -> Result<bool, sqlx::Error> {
         with_db!(self, |pool, Db| {
@@ -51,6 +64,28 @@ impl Database {
             rows.into_iter().map(map_customer).collect()
         })
     }
+
+    pub async fn update_customer(
+        &self,
+        customer_id: &str,
+        update: &CustomerUpdate,
+    ) -> Result<Option<Customer>, sqlx::Error> {
+        with_db!(self, |pool, Db| {
+            if update.is_empty() {
+                return Ok(None);
+            }
+
+            let mut builder = build_update_customer_query::<Db>(customer_id, update);
+            let result = builder.build().execute(pool).await?;
+            if result.rows_affected() == 0 {
+                return Ok(None);
+            }
+
+            let mut builder = build_get_customer_query::<Db>(customer_id);
+            let row = builder.build().fetch_optional(pool).await?;
+            row.map(map_customer).transpose()
+        })
+    }
 }
 
 fn build_customer_exists_query<'args, DB>(customer_id: &'args str) -> QueryBuilder<'args, DB>
@@ -91,6 +126,38 @@ where
     separated.push_bind(customer.created_at);
     separated.push_bind(customer.suspended_at);
     builder.push(")");
+    builder
+}
+
+fn build_update_customer_query<'args, DB>(
+    customer_id: &'args str,
+    update: &'args CustomerUpdate,
+) -> QueryBuilder<'args, DB>
+where
+    DB: sqlx::Database,
+    &'args str: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+    &'args Option<String>: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+    &'args Option<i64>: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+{
+    let mut builder = QueryBuilder::<DB>::new(sql::customers::UPDATE);
+    let mut separated = builder.separated(", ");
+
+    if let Some(name) = update.name.as_deref() {
+        separated.push("name = ");
+        separated.push_bind_unseparated(name);
+    }
+
+    if let Some(plan) = &update.plan {
+        separated.push("plan = ");
+        separated.push_bind_unseparated(plan);
+    }
+
+    if let Some(suspended_at) = &update.suspended_at {
+        separated.push("suspended_at = ");
+        separated.push_bind_unseparated(suspended_at);
+    }
+
+    builder.push(" WHERE id = ").push_bind(customer_id);
     builder
 }
 

@@ -7,12 +7,13 @@ use crate::errors::{ErrorBody, ErrorDetail};
 use crate::handlers::{
     AdminCreateCustomerRequest, AdminCreateCustomerResponse, AdminCreateKeyRequest,
     AdminCreateKeyResponse, AdminCustomerListQuery, AdminCustomerListResponse,
-    AdminCustomerResponse, AdminRevokeKeyRequest, AdminRevokeKeyResponse, ArtifactPresignRequest,
-    ArtifactPresignResponse, ArtifactRegisterRequest, ArtifactRegisterResponse, ArtifactSummary,
-    AuditEventListQuery, AuditEventListResponse, AuditEventResponse, DownloadTokenRequest,
-    DownloadTokenResponse, EntitlementCreateRequest, EntitlementListQuery, EntitlementListResponse,
-    EntitlementResponse, EntitlementUpdateRequest, HealthResponse, ReleaseCreateRequest,
-    ReleaseListQuery, ReleaseListResponse, ReleaseResponse,
+    AdminCustomerResponse, AdminRevokeKeyRequest, AdminRevokeKeyResponse,
+    AdminUpdateCustomerRequest, ArtifactPresignRequest, ArtifactPresignResponse,
+    ArtifactRegisterRequest, ArtifactRegisterResponse, ArtifactSummary, AuditEventListQuery,
+    AuditEventListResponse, AuditEventResponse, DownloadTokenRequest, DownloadTokenResponse,
+    EntitlementCreateRequest, EntitlementListQuery, EntitlementListResponse, EntitlementResponse,
+    EntitlementUpdateRequest, HealthResponse, ReleaseCreateRequest, ReleaseListQuery,
+    ReleaseListResponse, ReleaseResponse,
 };
 use crate::models::ApiKeyIntrospection;
 
@@ -27,6 +28,7 @@ use crate::models::ApiKeyIntrospection;
         crate::handlers::admin::admin_create_customer,
         crate::handlers::admin::list_customers,
         crate::handlers::admin::get_customer,
+        crate::handlers::admin::update_customer,
         crate::handlers::entitlements::list_entitlements,
         crate::handlers::entitlements::create_entitlement,
         crate::handlers::entitlements::update_entitlement,
@@ -58,6 +60,7 @@ use crate::models::ApiKeyIntrospection;
             AdminCustomerResponse,
             AdminCustomerListResponse,
             AdminCustomerListQuery,
+            AdminUpdateCustomerRequest,
             AdminCreateKeyRequest,
             AdminCreateKeyResponse,
             AdminRevokeKeyRequest,

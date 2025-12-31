@@ -45,6 +45,8 @@ mod idempotency;
 mod releases;
 mod sql;
 
+pub(crate) use customers::CustomerUpdate;
+
 #[derive(Clone)]
 pub enum Database {
     Postgres(PgPool),
