@@ -54,6 +54,10 @@ pub(in crate::db) mod customers {
         env!("CARGO_MANIFEST_DIR"),
         "/sql/customers/get.sql"
     ));
+    pub(in crate::db) const LIST_BASE: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/sql/customers/list_base.sql"
+    ));
     pub(in crate::db) const INSERT: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/sql/customers/insert.sql"

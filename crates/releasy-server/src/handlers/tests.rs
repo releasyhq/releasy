@@ -203,6 +203,97 @@ async fn create_release_rejects_duplicate_version() {
 }
 
 #[tokio::test]
+async fn list_customers_filters_by_name_and_plan() {
+    let state = setup_state().await;
+    let now = now_ts_or_internal().expect("now");
+
+    let customer = Customer {
+        id: "customer-acme".to_string(),
+        name: "Acme Corp".to_string(),
+        plan: Some("Pro".to_string()),
+        allowed_prefixes: None,
+        created_at: now,
+        suspended_at: None,
+    };
+    let other = Customer {
+        id: "customer-beta".to_string(),
+        name: "Beta LLC".to_string(),
+        plan: Some("Starter".to_string()),
+        allowed_prefixes: None,
+        created_at: now,
+        suspended_at: None,
+    };
+
+    state
+        .db
+        .insert_customer(&customer)
+        .await
+        .expect("insert customer");
+    state
+        .db
+        .insert_customer(&other)
+        .await
+        .expect("insert customer");
+
+    let query = AdminCustomerListQuery {
+        customer_id: None,
+        name: Some("acme".to_string()),
+        plan: Some("pro".to_string()),
+        limit: Some(10),
+        offset: Some(0),
+    };
+
+    let Json(response) = list_customers(State(state), admin_headers(), Query(query))
+        .await
+        .expect("list customers");
+
+    assert_eq!(response.customers.len(), 1);
+    assert_eq!(response.customers[0].id, "customer-acme");
+}
+
+#[tokio::test]
+async fn get_customer_returns_customer() {
+    let state = setup_state().await;
+    let now = now_ts_or_internal().expect("now");
+
+    let customer = Customer {
+        id: "customer-detail".to_string(),
+        name: "Customer Detail".to_string(),
+        plan: None,
+        allowed_prefixes: None,
+        created_at: now,
+        suspended_at: None,
+    };
+    state
+        .db
+        .insert_customer(&customer)
+        .await
+        .expect("insert customer");
+
+    let Json(response) = get_customer(State(state), admin_headers(), Path(customer.id.clone()))
+        .await
+        .expect("get customer");
+
+    assert_eq!(response.id, customer.id);
+    assert_eq!(response.name, customer.name);
+}
+
+#[tokio::test]
+async fn get_customer_returns_not_found() {
+    let state = setup_state().await;
+
+    let err = get_customer(
+        State(state),
+        admin_headers(),
+        Path("missing-customer".to_string()),
+    )
+    .await
+    .expect_err("missing customer");
+
+    assert_eq!(err.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn create_release_is_idempotent() {
     let state = setup_state().await;
     let mut headers = admin_headers();

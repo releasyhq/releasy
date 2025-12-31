@@ -9,7 +9,9 @@ pub(crate) mod keys;
 pub(crate) mod releases;
 
 pub(crate) use admin::{
-    AdminCreateCustomerRequest, AdminCreateCustomerResponse, admin_create_customer,
+    AdminCreateCustomerRequest, AdminCreateCustomerResponse, AdminCustomerListQuery,
+    AdminCustomerListResponse, AdminCustomerResponse, admin_create_customer, get_customer,
+    list_customers,
 };
 pub(crate) use artifacts::{
     ArtifactPresignRequest, ArtifactPresignResponse, ArtifactRegisterRequest,

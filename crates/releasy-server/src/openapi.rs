@@ -6,7 +6,8 @@ use utoipa::{Modify, OpenApi};
 use crate::errors::{ErrorBody, ErrorDetail};
 use crate::handlers::{
     AdminCreateCustomerRequest, AdminCreateCustomerResponse, AdminCreateKeyRequest,
-    AdminCreateKeyResponse, AdminRevokeKeyRequest, AdminRevokeKeyResponse, ArtifactPresignRequest,
+    AdminCreateKeyResponse, AdminCustomerListQuery, AdminCustomerListResponse,
+    AdminCustomerResponse, AdminRevokeKeyRequest, AdminRevokeKeyResponse, ArtifactPresignRequest,
     ArtifactPresignResponse, ArtifactRegisterRequest, ArtifactRegisterResponse, ArtifactSummary,
     AuditEventListQuery, AuditEventListResponse, AuditEventResponse, DownloadTokenRequest,
     DownloadTokenResponse, EntitlementCreateRequest, EntitlementListQuery, EntitlementListResponse,
@@ -24,6 +25,8 @@ use crate::models::ApiKeyIntrospection;
     ),
     paths(
         crate::handlers::admin::admin_create_customer,
+        crate::handlers::admin::list_customers,
+        crate::handlers::admin::get_customer,
         crate::handlers::entitlements::list_entitlements,
         crate::handlers::entitlements::create_entitlement,
         crate::handlers::entitlements::update_entitlement,
@@ -52,6 +55,9 @@ use crate::models::ApiKeyIntrospection;
             ErrorDetail,
             AdminCreateCustomerRequest,
             AdminCreateCustomerResponse,
+            AdminCustomerResponse,
+            AdminCustomerListResponse,
+            AdminCustomerListQuery,
             AdminCreateKeyRequest,
             AdminCreateKeyResponse,
             AdminRevokeKeyRequest,

@@ -28,6 +28,29 @@ impl Database {
             row.map(map_customer).transpose()
         })
     }
+
+    pub async fn list_customers(
+        &self,
+        customer_id: Option<&str>,
+        name: Option<&str>,
+        plan: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Customer>, sqlx::Error> {
+        with_db!(self, |pool, Db| {
+            let name_filter = name.map(|value| format!("%{}%", value.to_ascii_lowercase()));
+            let plan_filter = plan.map(|value| value.to_ascii_lowercase());
+            let mut builder = build_list_customers_query::<Db>(
+                customer_id,
+                name_filter.as_deref(),
+                plan_filter.as_deref(),
+                limit,
+                offset,
+            );
+            let rows = builder.build().fetch_all(pool).await?;
+            rows.into_iter().map(map_customer).collect()
+        })
+    }
 }
 
 fn build_customer_exists_query<'args, DB>(customer_id: &'args str) -> QueryBuilder<'args, DB>
@@ -68,6 +91,57 @@ where
     separated.push_bind(customer.created_at);
     separated.push_bind(customer.suspended_at);
     builder.push(")");
+    builder
+}
+
+fn build_list_customers_query<'args, DB>(
+    customer_id: Option<&'args str>,
+    name_like: Option<&'args str>,
+    plan: Option<&'args str>,
+    limit: i64,
+    offset: i64,
+) -> QueryBuilder<'args, DB>
+where
+    DB: sqlx::Database,
+    &'args str: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+    i64: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+{
+    let mut builder = QueryBuilder::<DB>::new(sql::customers::LIST_BASE);
+    let mut has_where = false;
+
+    if let Some(customer_id) = customer_id {
+        if !has_where {
+            builder.push(" WHERE ");
+            has_where = true;
+        }
+        builder.push("id = ").push_bind(customer_id);
+    }
+
+    if let Some(name_like) = name_like {
+        if !has_where {
+            builder.push(" WHERE ");
+            has_where = true;
+        } else {
+            builder.push(" AND ");
+        }
+        builder.push("LOWER(name) LIKE ").push_bind(name_like);
+    }
+
+    if let Some(plan) = plan {
+        if !has_where {
+            builder.push(" WHERE ");
+        } else {
+            builder.push(" AND ");
+        }
+        builder.push("LOWER(plan) = ").push_bind(plan);
+    }
+
+    builder
+        .push(" ORDER BY created_at DESC LIMIT ")
+        .push_bind(limit)
+        .push(" OFFSET ")
+        .push_bind(offset);
+
     builder
 }
 
