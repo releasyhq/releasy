@@ -25,13 +25,17 @@
     - name: Show current UFW status (dry run)
       ansible.builtin.command: ufw status verbose
       register: ufw_status_verbose
-      when: releasy_firewall_enabled and releasy_firewall_show_rules_dry_run
+      when: >-
+        (releasy_firewall_enabled | default(false)) and
+        (releasy_firewall_show_rules_dry_run | default(false))
       changed_when: false
       failed_when: false
     - name: Print current UFW status (dry run)
       ansible.builtin.debug:
         var: ufw_status_verbose.stdout_lines
-      when: releasy_firewall_enabled and releasy_firewall_show_rules_dry_run
+      when: >-
+        (releasy_firewall_enabled | default(false)) and
+        (releasy_firewall_show_rules_dry_run | default(false))
   roles:
     - role: tailscale
       when: tailscale_enabled | default(false)
