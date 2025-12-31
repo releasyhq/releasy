@@ -663,3 +663,51 @@ async fn health_endpoint_reports_db_unavailable() {
         Some("service_unavailable")
     );
 }
+
+#[tokio::test]
+async fn ready_endpoint_returns_ok() {
+    let (app, _db) = setup_app().await;
+
+    let response = send_empty(&app, "GET", "/ready", &[]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    assert_eq!(body.get("status").and_then(Value::as_str), Some("ok"));
+}
+
+#[tokio::test]
+async fn ready_endpoint_reports_db_unavailable() {
+    let (app, db) = setup_app().await;
+
+    match &db {
+        Database::Sqlite(pool) => {
+            pool.close().await;
+        }
+        Database::Postgres(_) => panic!("sqlite expected"),
+    }
+
+    let response = send_empty(&app, "GET", "/ready", &[]).await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = response_json(response).await;
+    let error = body.get("error").and_then(Value::as_object).expect("error");
+    assert_eq!(
+        error.get("code").and_then(Value::as_str),
+        Some("service_unavailable")
+    );
+}
+
+#[tokio::test]
+async fn live_endpoint_returns_ok_without_db() {
+    let (app, db) = setup_app().await;
+
+    match &db {
+        Database::Sqlite(pool) => {
+            pool.close().await;
+        }
+        Database::Postgres(_) => panic!("sqlite expected"),
+    }
+
+    let response = send_empty(&app, "GET", "/live", &[]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    assert_eq!(body.get("status").and_then(Value::as_str), Some("ok"));
+}

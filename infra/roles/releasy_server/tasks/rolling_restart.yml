@@ -17,7 +17,7 @@
       {{
         'http://127.0.0.1:' ~
         ((releasy_server_instance_port_base | default(releasy_port) | int) + instance_index) ~
-        (releasy_server_healthcheck_path | default('/openapi.json'))
+        (releasy_server_healthcheck_path | default('/ready'))
       }}
     status_code: 200
     timeout: 5

@@ -41,6 +41,28 @@
         }
       }
     },
+    "/live": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Liveness check",
+        "description": "Returns ok when the API process is running.",
+        "operationId": "live_check",
+        "responses": {
+          "200": {
+            "description": "Service is live",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/openapi.json": {
       "get": {
         "tags": [
@@ -52,6 +74,38 @@
         "responses": {
           "200": {
             "description": "OpenAPI document"
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Readiness check",
+        "description": "Returns ok when the API is ready to serve requests.",
+        "operationId": "ready_check",
+        "responses": {
+          "200": {
+            "description": "Service is ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         }
       }

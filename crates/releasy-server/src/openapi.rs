@@ -42,6 +42,8 @@ use crate::models::ApiKeyIntrospection;
         crate::handlers::downloads::resolve_download_token,
         crate::handlers::auth::auth_introspect,
         crate::handlers::health::health_check,
+        crate::handlers::health::ready_check,
+        crate::handlers::health::live_check,
         crate::openapi::openapi_json
     ),
     components(

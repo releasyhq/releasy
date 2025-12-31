@@ -27,7 +27,7 @@ pub(crate) use entitlements::{
     EntitlementUpdateRequest, create_entitlement, delete_entitlement, list_entitlements,
     update_entitlement,
 };
-pub(crate) use health::{HealthResponse, health_check};
+pub(crate) use health::{HealthResponse, health_check, live_check, ready_check};
 pub(crate) use keys::{
     AdminCreateKeyRequest, AdminCreateKeyResponse, AdminRevokeKeyRequest, AdminRevokeKeyResponse,
     admin_create_key, admin_revoke_key,

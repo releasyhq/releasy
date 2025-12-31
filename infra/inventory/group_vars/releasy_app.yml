@@ -14,7 +14,7 @@ releasy_server_instances:
   - green
 releasy_server_image: "ghcr.io/releasyhq/releasy-server:latest"
 releasy_server_container_name_prefix: "releasy-server"
-releasy_server_healthcheck_path: "/v1/health"
+releasy_server_healthcheck_path: "/ready"
 releasy_server_healthcheck_timeout: 60
 releasy_server_healthcheck_retries: 10
 releasy_server_healthcheck_delay: 2
