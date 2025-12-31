@@ -120,11 +120,7 @@
     group: root
     mode: "0644"
   register: keycloak_unit
-
-- name: Reload systemd when unit changed
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: keycloak_unit.changed
+  notify: Reload systemd
 
 - name: Stop legacy keycloak service if present
   ansible.builtin.systemd:

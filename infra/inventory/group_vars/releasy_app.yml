@@ -36,7 +36,10 @@ releasy_artifact_bucket_object_lock_default_retention: {}
 releasy_download_token_ttl_seconds: 600
 releasy_log_level: "info"
 releasy_database_max_connections: 5
-releasy_database_url: "postgres://{{ postgres_app_user | urlencode }}:{{ postgres_app_password | urlencode }}@{{ postgres_host }}:{{ postgres_port }}/{{ postgres_app_db }}"
+releasy_database_url: >-
+  {{ "postgres://" ~ (postgres_app_user | urlencode) ~ ":" ~
+     (postgres_app_password | urlencode) ~ "@" ~ postgres_host ~ ":" ~
+     postgres_port ~ "/" ~ postgres_app_db }}
 
 # Bind address (inside container)
 releasy_bind_addr: "0.0.0.0:{{ releasy_container_port | default(releasy_port) }}"

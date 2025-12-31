@@ -13,6 +13,10 @@
 
 - name: Check Keycloak health endpoint
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ (keycloak_instance_port_base | default(keycloak_http_port | default(8080)) | int) + instance_index }}{{ keycloak_healthcheck_path | default('/health/ready') }}"
+    url: >-
+      {{ "http://127.0.0.1:" ~
+         ((keycloak_instance_port_base | default(keycloak_http_port
+           | default(8080)) | int) + instance_index) ~
+         (keycloak_healthcheck_path | default('/health/ready')) }}
     status_code: 200
     timeout: 5
