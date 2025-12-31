@@ -4,3 +4,16 @@ releasy_database_url: >-
      (postgres_app_password | urlencode) ~ "@" ~
      (releasy_server_postgres_host | default(postgres_host, true)) ~ ":" ~
      postgres_port ~ "/" ~ postgres_app_db }}
+
+# Optional firewall defaults (app host). Keep disabled by default.
+releasy_firewall_enabled: false
+releasy_firewall_enable_ufw: false
+releasy_firewall_default_deny_incoming: false
+releasy_firewall_allow_ssh: true
+releasy_firewall_explicit_deny_ssh: true
+releasy_firewall_show_rules: true
+releasy_firewall_show_rules_dry_run: true
+releasy_firewall_ssh_sources:
+  - "100.64.0.0/10"
+  - "fd7a:115c:a1e0::/48"
+releasy_firewall_allowed_sources: []
