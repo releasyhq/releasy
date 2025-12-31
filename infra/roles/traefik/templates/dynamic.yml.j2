@@ -38,6 +38,12 @@ http:
   services:
     releasy-server:
       loadBalancer:
+{% if traefik_releasy_server_healthcheck_enabled | default(true) %}
+        healthCheck:
+          path: "{{ traefik_releasy_server_healthcheck_path }}"
+          interval: "{{ traefik_releasy_server_healthcheck_interval }}"
+          timeout: "{{ traefik_releasy_server_healthcheck_timeout }}"
+{% endif %}
         servers:
         {% for upstream in traefik_releasy_server_upstreams %}
           - url: "{{ upstream }}"
