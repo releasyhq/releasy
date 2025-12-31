@@ -115,7 +115,7 @@
   ansible.builtin.set_fact:
     releasy_db_host_primary_ipv4: >-
       {{
-        (hostvars[releasy_db_primary_host].get('ansible_default_ipv4', {}).get('address', '')
+        (hostvars[releasy_db_primary_host].get('ansible_facts', {}).get('default_ipv4', {}).get('address', '')
           | default(releasy_db_host_private_ipv4, true))
         | default(releasy_db_host_addr, true)
       }}
@@ -202,12 +202,12 @@
           [releasy_extra_ip_cidr]
           + (
             [
-              ansible_default_ipv6.address ~ '/' ~ ansible_default_ipv6.prefix
+              ansible_facts["default_ipv6"]["address"] ~ '/' ~ ansible_facts["default_ipv6"]["prefix"]
             ]
             if (releasy_extra_ip_preserve_ipv6 | default(false))
-            and (ansible_default_ipv6 is defined)
-            and (ansible_default_ipv6.address is defined)
-            and (ansible_default_ipv6.prefix is defined)
+            and (ansible_facts["default_ipv6"] is defined)
+            and (ansible_facts["default_ipv6"]["address"] is defined)
+            and (ansible_facts["default_ipv6"]["prefix"] is defined)
             else []
           )
           + (releasy_extra_ip_netplan_additional_addresses | default([]))

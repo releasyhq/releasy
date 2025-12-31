@@ -2,7 +2,7 @@
 - name: Assert supported OS
   ansible.builtin.assert:
     that:
-      - ansible_distribution | lower in ["ubuntu", "debian"]
+      - ansible_facts["distribution"] | lower in ["ubuntu", "debian"]
     fail_msg: "Tailscale role supports Ubuntu/Debian only."
     quiet: true
 

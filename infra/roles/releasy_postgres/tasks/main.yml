@@ -89,7 +89,7 @@
   ansible.builtin.set_fact:
     releasy_db_host_primary_ipv4: >-
       {{
-        ansible_default_ipv4.address
+        ansible_facts["default_ipv4"]["address"]
         | default(releasy_db_host_private_ipv4, true)
         | default(releasy_db_host_ipv4, true)
       }}
@@ -98,11 +98,11 @@
   ansible.builtin.set_fact:
     releasy_docker_bridge_cidr: >-
       {{
-        (ansible_docker0.ipv4.network ~ '/' ~ ansible_docker0.ipv4.prefix)
-        if (ansible_docker0 is defined
-            and ansible_docker0.ipv4 is defined
-            and ansible_docker0.ipv4.network is defined
-            and ansible_docker0.ipv4.prefix is defined)
+        (ansible_facts["docker0"]["ipv4"]["network"] ~ '/' ~ ansible_facts["docker0"]["ipv4"]["prefix"])
+        if (ansible_facts["docker0"] is defined
+            and ansible_facts["docker0"]["ipv4"] is defined
+            and ansible_facts["docker0"]["ipv4"]["network"] is defined
+            and ansible_facts["docker0"]["ipv4"]["prefix"] is defined)
         else ''
       }}
 

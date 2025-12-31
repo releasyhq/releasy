@@ -8,7 +8,7 @@
 
 - name: Resolve Traefik architecture
   ansible.builtin.set_fact:
-    traefik_arch: "{{ traefik_arch | default(_traefik_arch_map.get(ansible_architecture, '')) }}"
+    traefik_arch: "{{ traefik_arch | default(_traefik_arch_map.get(ansible_facts['architecture'], '')) }}"
   vars:
     _traefik_arch_map:
       aarch64: arm64
