@@ -20,3 +20,7 @@
          (keycloak_healthcheck_path | default('/health/ready')) }}
     status_code: 200
     timeout: 5
+  register: keycloak_healthcheck
+  retries: "{{ keycloak_healthcheck_retries | default(15) }}"
+  delay: "{{ keycloak_healthcheck_delay | default(4) }}"
+  until: keycloak_healthcheck.status | default(0) == 200

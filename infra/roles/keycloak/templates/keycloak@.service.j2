@@ -12,15 +12,7 @@ EnvironmentFile={{ keycloak_env_file }}
 EnvironmentFile={{ keycloak_env_dir }}/keycloak-%i.env
 ExecStartPre=-/usr/bin/docker rm -f {{ keycloak_container_name_prefix }}-%i
 ExecStartPre=/usr/bin/docker pull {{ keycloak_image }}
-ExecStart=/usr/bin/docker run --rm \
-  --name {{ keycloak_container_name_prefix }}-%i \
-  --env-file {{ keycloak_env_file }} \
-  --env-file {{ keycloak_env_dir }}/keycloak-%i.env \
-  -p ${KEYCLOAK_HTTP_PORT}:8080 \
-{% if keycloak_docker_extra_args | default([]) | length > 0 %}
-  {{ keycloak_docker_extra_args | join(' ') }} \
-{% endif %}
-  {{ keycloak_image }} start{{ ' --import-realm' if keycloak_realm_import_enabled | default(false) else '' }}{{ (' ' ~ (keycloak_start_args | join(' '))) if (keycloak_start_args | length > 0) else '' }}
+ExecStart=/usr/local/bin/keycloak-run %i
 ExecStop=/usr/bin/docker stop {{ keycloak_container_name_prefix }}-%i
 
 [Install]

@@ -1,5 +1,6 @@
 http:
   routers:
+{% if traefik_releasy_enabled | default(true) %}
     releasy-http:
       rule: "Host(`{{ releasy_public_host }}`)"
       entryPoints:
@@ -16,6 +17,7 @@ http:
       tls:
         certResolver: letsencrypt
       service: releasy-server
+{% endif %}
 {% if keycloak_public_host | default('') and (keycloak_upstreams | default([]) | length > 0) %}
     keycloak-http:
       rule: "Host(`{{ keycloak_public_host }}`)"
@@ -36,6 +38,7 @@ http:
 {% endif %}
 
   services:
+{% if traefik_releasy_enabled | default(true) %}
     releasy-server:
       loadBalancer:
 {% if traefik_releasy_server_healthcheck_enabled | default(true) %}
@@ -48,6 +51,7 @@ http:
         {% for upstream in traefik_releasy_server_upstreams %}
           - url: "{{ upstream }}"
         {% endfor %}
+{% endif %}
 {% if keycloak_public_host | default('') and (keycloak_upstreams | default([]) | length > 0) %}
     keycloak:
       loadBalancer:

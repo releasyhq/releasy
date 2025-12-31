@@ -3,6 +3,7 @@ keycloak_enabled: false
 keycloak_image: "keycloak/keycloak:26.4"
 keycloak_container_name: "keycloak"
 keycloak_http_port: 8080
+keycloak_bind_address: ""
 keycloak_data_dir: "/var/lib/keycloak"
 keycloak_env_dir: "/etc/keycloak"
 keycloak_env_file: "/etc/keycloak/keycloak.env"

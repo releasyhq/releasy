@@ -1,4 +1,5 @@
 ---
+traefik_releasy_enabled: true
 traefik_releasy_server_healthcheck_enabled: true
 traefik_releasy_server_healthcheck_path: >-
   {{ releasy_server_healthcheck_path | default('/ready') }}

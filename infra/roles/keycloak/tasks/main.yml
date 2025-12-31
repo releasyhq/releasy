@@ -122,6 +122,15 @@
   no_log: true
   register: keycloak_instance_envs
 
+- name: Render Keycloak run script
+  ansible.builtin.template:
+    src: keycloak-run.sh.j2
+    dest: /usr/local/bin/keycloak-run
+    owner: root
+    group: root
+    mode: "0755"
+  register: keycloak_run_script
+
 - name: Install Keycloak systemd template
   ansible.builtin.template:
     src: keycloak@.service.j2
@@ -131,6 +140,9 @@
     mode: "0644"
   register: keycloak_unit
   notify: Reload systemd
+
+- name: Reload systemd when unit changes
+  ansible.builtin.meta: flush_handlers
 
 - name: Stop legacy keycloak service if present
   ansible.builtin.systemd:
@@ -144,6 +156,7 @@
     name: "keycloak@{{ item }}"
     enabled: true
     state: started
+    daemon_reload: true
   loop: "{{ keycloak_instances }}"
 
 - name: Determine rolling restart requirement
@@ -152,6 +165,7 @@
       {{
         keycloak_env.changed
         or keycloak_instance_envs.changed
+        or (keycloak_run_script is defined and keycloak_run_script.changed)
         or keycloak_unit.changed
         or (keycloak_realm_template is defined and keycloak_realm_template.changed)
         or (keycloak_realm_copy is defined and keycloak_realm_copy.changed)

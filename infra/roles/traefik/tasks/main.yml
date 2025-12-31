@@ -2,9 +2,16 @@
 - name: Assert required variables
   ansible.builtin.assert:
     that:
-      - releasy_public_host is defined
       - traefik_acme_email is defined
     quiet: true
+
+- name: Assert Releasy public host when enabled
+  ansible.builtin.assert:
+    that:
+      - releasy_public_host is defined
+      - releasy_public_host | length > 0
+    quiet: true
+  when: traefik_releasy_enabled | default(true)
 
 - name: Resolve Traefik architecture
   ansible.builtin.set_fact:
@@ -122,7 +129,9 @@
 - name: Use configured Releasy upstreams when provided
   ansible.builtin.set_fact:
     traefik_releasy_server_upstreams: "{{ releasy_server_upstreams }}"
-  when: releasy_server_upstreams is defined
+  when:
+    - traefik_releasy_enabled | default(true)
+    - releasy_server_upstreams is defined
 
 - name: Default Releasy upstreams from app hosts
   ansible.builtin.set_fact:
@@ -140,7 +149,9 @@
       {%-   endif -%}
       {%- endfor -%}
       {{ upstreams }}
-  when: traefik_releasy_server_upstreams is not defined
+  when:
+    - traefik_releasy_enabled | default(true)
+    - traefik_releasy_server_upstreams is not defined
 
 - name: Assert Releasy upstreams are available
   ansible.builtin.assert:
@@ -152,6 +163,7 @@
       traefik_releasy_server_upstreams is empty. Define releasy_server_upstreams
       explicitly or add at least one host to the releasy_app group with
       releasy_server_instances and instance ports.
+  when: traefik_releasy_enabled | default(true)
 
 - name: Render Traefik dynamic config
   ansible.builtin.template:
