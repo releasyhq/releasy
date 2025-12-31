@@ -51,8 +51,8 @@ impl Database {
         offset: i64,
     ) -> Result<Vec<Customer>, sqlx::Error> {
         with_db!(self, |pool, Db| {
-            let name_filter = name.map(|value| format!("%{}%", value.to_ascii_lowercase()));
-            let plan_filter = plan.map(|value| value.to_ascii_lowercase());
+            let name_filter = name.map(|value| format!("%{}%", value));
+            let plan_filter = plan.map(str::to_string);
             let mut builder = build_list_customers_query::<Db>(
                 customer_id,
                 name_filter.as_deref(),
@@ -191,7 +191,10 @@ where
         } else {
             builder.push(" AND ");
         }
-        builder.push("LOWER(name) LIKE ").push_bind(name_like);
+        builder
+            .push("LOWER(name) LIKE LOWER(")
+            .push_bind(name_like)
+            .push(")");
     }
 
     if let Some(plan) = plan {
@@ -200,7 +203,10 @@ where
         } else {
             builder.push(" AND ");
         }
-        builder.push("LOWER(plan) = ").push_bind(plan);
+        builder
+            .push("LOWER(plan) = LOWER(")
+            .push_bind(plan)
+            .push(")");
     }
 
     builder

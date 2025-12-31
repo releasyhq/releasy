@@ -252,6 +252,25 @@ async fn list_customers_filters_by_name_and_plan() {
 }
 
 #[tokio::test]
+async fn list_customers_rejects_zero_limit() {
+    let state = setup_state().await;
+
+    let query = AdminCustomerListQuery {
+        customer_id: None,
+        name: None,
+        plan: None,
+        limit: Some(0),
+        offset: Some(0),
+    };
+
+    let err = list_customers(State(state), admin_headers(), Query(query))
+        .await
+        .expect_err("invalid limit");
+
+    assert_eq!(err.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn get_customer_returns_customer() {
     let state = setup_state().await;
     let now = now_ts_or_internal().expect("now");

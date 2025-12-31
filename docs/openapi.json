@@ -266,7 +266,10 @@
             "description": "Optional exact customer id filter",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           {
@@ -275,7 +278,10 @@
             "description": "Optional name filter (case-insensitive contains)",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           {
@@ -284,7 +290,10 @@
             "description": "Optional plan filter (case-insensitive exact match)",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           {
@@ -293,9 +302,14 @@
             "description": "Page size (default 50, max 200)",
             "required": false,
             "schema": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "format": "int32",
-              "minimum": 0
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1
             }
           },
           {
@@ -304,8 +318,12 @@
             "description": "Page offset (default 0)",
             "required": false,
             "schema": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "format": "int32",
+              "default": 0,
               "minimum": 0
             }
           }
@@ -2368,7 +2386,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Optional exact customer id filter"
           },
           "limit": {
             "type": [
@@ -2376,13 +2395,16 @@
               "null"
             ],
             "format": "int32",
-            "minimum": 0
+            "description": "Page size (default 50, max 200)",
+            "maximum": 200,
+            "minimum": 1
           },
           "name": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Optional name filter (case-insensitive contains)"
           },
           "offset": {
             "type": [
@@ -2390,13 +2412,15 @@
               "null"
             ],
             "format": "int32",
+            "description": "Page offset (default 0)",
             "minimum": 0
           },
           "plan": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Optional plan filter (case-insensitive exact match)"
           }
         }
       },

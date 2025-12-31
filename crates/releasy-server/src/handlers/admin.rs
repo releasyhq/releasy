@@ -2,7 +2,7 @@ use axum::extract::{Json, Path, Query, State};
 use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use tracing::error;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -62,12 +62,21 @@ pub(crate) struct AdminCustomerListResponse {
     pub(crate) offset: i64,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
 pub(crate) struct AdminCustomerListQuery {
+    /// Optional exact customer id filter
     pub(crate) customer_id: Option<String>,
+    /// Optional name filter (case-insensitive contains)
     pub(crate) name: Option<String>,
+    /// Optional plan filter (case-insensitive exact match)
     pub(crate) plan: Option<String>,
+    /// Page size (default 50, max 200)
+    #[param(default = 50, minimum = 1, maximum = 200)]
+    #[schema(minimum = 1, maximum = 200)]
     pub(crate) limit: Option<u32>,
+    /// Page offset (default 0)
+    #[param(default = 0, minimum = 0)]
+    #[schema(minimum = 0)]
     pub(crate) offset: Option<u32>,
 }
 
@@ -153,13 +162,7 @@ pub async fn admin_create_customer(
     tag = "admin",
     summary = "List customers",
     description = "Lists customers with optional filters. Requires platform_support or platform_admin role.",
-    params(
-        ("customer_id" = Option<String>, Query, description = "Optional exact customer id filter"),
-        ("name" = Option<String>, Query, description = "Optional name filter (case-insensitive contains)"),
-        ("plan" = Option<String>, Query, description = "Optional plan filter (case-insensitive exact match)"),
-        ("limit" = Option<u32>, Query, description = "Page size (default 50, max 200)"),
-        ("offset" = Option<u32>, Query, description = "Page offset (default 0)")
-    ),
+    params(AdminCustomerListQuery),
     responses(
         (status = 200, description = "Customers list", body = AdminCustomerListResponse),
         (status = 400, description = "Invalid request", body = ErrorBody),
