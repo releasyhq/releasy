@@ -64,7 +64,7 @@ jobs:
 
       - name: Upload artifact
         if: inputs.artifact_name != '' && inputs.artifact_path != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ inputs.artifact_name }}
           path: ${{ inputs.artifact_path }}
