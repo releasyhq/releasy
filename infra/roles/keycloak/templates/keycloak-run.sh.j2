@@ -7,6 +7,7 @@ exec /usr/bin/docker run --rm \
   --name {{ keycloak_container_name_prefix }}-"${instance}" \
   --env-file {{ keycloak_env_file }} \
   --env-file {{ keycloak_env_dir }}/keycloak-"${instance}".env \
+  -v {{ keycloak_data_dir }}:/opt/keycloak/data \
 {% if keycloak_bind_address | default('') %}
   -p {{ keycloak_bind_address }}:${KEYCLOAK_HTTP_PORT}:8080 \
 {% else %}
