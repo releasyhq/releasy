@@ -119,9 +119,14 @@
     - traefik_rate_limit_average is not defined
     - traefik_rate_limit_burst is not defined
 
+- name: Use configured Releasy upstreams when provided
+  ansible.builtin.set_fact:
+    traefik_releasy_server_upstreams: "{{ releasy_server_upstreams }}"
+  when: releasy_server_upstreams is defined
+
 - name: Default Releasy upstreams from app hosts
   ansible.builtin.set_fact:
-    releasy_server_upstreams: >-
+    traefik_releasy_server_upstreams: >-
       {%- set upstreams = [] -%}
       {%- for host in groups.get('releasy_app', []) -%}
       {%-   set host_ip = (hostvars[host].ansible_host | default(host, true)) | string | trim -%}
@@ -135,16 +140,16 @@
       {%-   endif -%}
       {%- endfor -%}
       {{ upstreams }}
-  when: releasy_server_upstreams is not defined
+  when: traefik_releasy_server_upstreams is not defined
 
 - name: Assert Releasy upstreams are available
   ansible.builtin.assert:
     that:
-      - releasy_server_upstreams is defined
-      - releasy_server_upstreams | length > 0
+      - traefik_releasy_server_upstreams is defined
+      - traefik_releasy_server_upstreams | length > 0
     quiet: true
     fail_msg: >-
-      releasy_server_upstreams is empty. Define releasy_server_upstreams
+      traefik_releasy_server_upstreams is empty. Define releasy_server_upstreams
       explicitly or add at least one host to the releasy_app group with
       releasy_server_instances and instance ports.
 

@@ -8,13 +8,13 @@ Requires=docker.service
 Type=simple
 Restart=always
 RestartSec=5
-EnvironmentFile={{ releasy_env_file }}
-EnvironmentFile={{ releasy_env_dir }}/releasy-%i.env
+EnvironmentFile={{ releasy_server_env_file }}
+EnvironmentFile={{ releasy_server_env_dir }}/releasy-%i.env
 ExecStartPre=-/usr/bin/docker rm -f {{ releasy_server_container_name_prefix }}-%i
 ExecStart=/usr/bin/docker run --rm \
   --name {{ releasy_server_container_name_prefix }}-%i \
-  --env-file {{ releasy_env_file }} \
-  --env-file {{ releasy_env_dir }}/releasy-%i.env \
+  --env-file {{ releasy_server_env_file }} \
+  --env-file {{ releasy_server_env_dir }}/releasy-%i.env \
   -p ${RELEASY_DOCKER_PORT}:${RELEASY_CONTAINER_PORT} \
 {% set docker_args = releasy_server_docker_extra_args_effective | default(releasy_server_docker_extra_args | default([])) %}
 {% if docker_args | length > 0 %}

@@ -19,9 +19,15 @@
     quiet: true
   when: keycloak_enabled | default(false)
 
+- name: Normalize Postgres settings
+  ansible.builtin.set_fact:
+    releasy_postgres_listen_addresses: "{{ postgres_listen_addresses }}"
+    releasy_postgres_allowed_cidrs: "{{ postgres_allowed_cidrs }}"
+    releasy_postgres_allowed_cidrs_auto_enabled: "{{ postgres_allowed_cidrs_auto_enabled | default(false) }}"
+
 - name: Collect effective host addresses
   ansible.builtin.set_fact:
-    releasy_app_host_addrs: >-
+    releasy_postgres_app_host_addrs: >-
       {%- set addrs = [] -%}
       {%- for host in groups.get('releasy_app', []) -%}
       {%-   set addr = (hostvars[host].ansible_host | default(host, true)) | string | trim -%}
@@ -30,7 +36,7 @@
       {%-   endif -%}
       {%- endfor -%}
       {{ addrs }}
-    releasy_db_host_addrs: >-
+    releasy_postgres_db_host_addrs: >-
       {%- set addrs = [] -%}
       {%- for host in groups.get('releasy_db', []) -%}
       {%-   set addr = (hostvars[host].ansible_host | default(host, true)) | string | trim -%}
@@ -42,61 +48,61 @@
 
 - name: Determine single-host mode
   ansible.builtin.set_fact:
-    releasy_single_host_mode: >-
+    releasy_postgres_single_host_mode: >-
       {{
-        (releasy_app_host_addrs | length > 0)
-        and (releasy_db_host_addrs | length > 0)
-        and ((releasy_app_host_addrs | unique) | length == 1)
-        and ((releasy_db_host_addrs | unique) | length == 1)
-        and ((releasy_app_host_addrs | unique)[0] == (releasy_db_host_addrs | unique)[0])
+        (releasy_postgres_app_host_addrs | length > 0)
+        and (releasy_postgres_db_host_addrs | length > 0)
+        and ((releasy_postgres_app_host_addrs | unique) | length == 1)
+        and ((releasy_postgres_db_host_addrs | unique) | length == 1)
+        and ((releasy_postgres_app_host_addrs | unique)[0] == (releasy_postgres_db_host_addrs | unique)[0])
       }}
 
 - name: Collect inventory IPv4 addresses
   ansible.builtin.set_fact:
-    releasy_app_host_ipv4s: >-
+    releasy_postgres_app_host_ipv4s: >-
       {{
-        releasy_app_host_addrs
+        releasy_postgres_app_host_addrs
         | select('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')
         | list
       }}
-    releasy_app_host_private_ipv4s: >-
+    releasy_postgres_app_host_private_ipv4s: >-
       {{
-        releasy_app_host_addrs
+        releasy_postgres_app_host_addrs
         | select('match', '^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)')
         | list
       }}
 
 - name: Collect inventory DB address
   ansible.builtin.set_fact:
-    releasy_db_host_addr: "{{ (ansible_host | default(inventory_hostname, true)) | string | trim }}"
+    releasy_postgres_db_host_addr: "{{ (ansible_host | default(inventory_hostname, true)) | string | trim }}"
 
 - name: Derive inventory DB IPv4 addresses
   ansible.builtin.set_fact:
-    releasy_db_host_ipv4: >-
+    releasy_postgres_db_host_ipv4: >-
       {{
-        releasy_db_host_addr
-        if releasy_db_host_addr is match('^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')
+        releasy_postgres_db_host_addr
+        if releasy_postgres_db_host_addr is match('^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')
         else ''
       }}
-    releasy_db_host_private_ipv4: >-
+    releasy_postgres_db_host_private_ipv4: >-
       {{
-        releasy_db_host_addr
-        if releasy_db_host_addr is match('^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)')
+        releasy_postgres_db_host_addr
+        if releasy_postgres_db_host_addr is match('^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)')
         else ''
       }}
 
 - name: Determine DB primary IPv4 address
   ansible.builtin.set_fact:
-    releasy_db_host_primary_ipv4: >-
+    releasy_postgres_db_host_primary_ipv4: >-
       {{
         ansible_facts["default_ipv4"]["address"]
-        | default(releasy_db_host_private_ipv4, true)
-        | default(releasy_db_host_ipv4, true)
+        | default(releasy_postgres_db_host_private_ipv4, true)
+        | default(releasy_postgres_db_host_ipv4, true)
       }}
 
 - name: Determine Docker bridge CIDR
   ansible.builtin.set_fact:
-    releasy_docker_bridge_cidr: >-
+    releasy_postgres_docker_bridge_cidr: >-
       {{
         (ansible_facts["docker0"]["ipv4"]["network"] ~ '/' ~ ansible_facts["docker0"]["ipv4"]["prefix"])
         if (ansible_facts["docker0"] is defined
@@ -108,101 +114,101 @@
 
 - name: Default Postgres networking for single host without Tailscale
   ansible.builtin.set_fact:
-    postgres_listen_addresses: "{{ releasy_db_host_primary_ipv4 }}"
-    postgres_allowed_cidrs: >-
+    releasy_postgres_listen_addresses: "{{ releasy_postgres_db_host_primary_ipv4 }}"
+    releasy_postgres_allowed_cidrs: >-
       {{
         ['127.0.0.1/32']
-        + ([releasy_docker_bridge_cidr]
-           if (releasy_docker_bridge_cidr | length > 0)
+        + ([releasy_postgres_docker_bridge_cidr]
+           if (releasy_postgres_docker_bridge_cidr | length > 0)
            else [])
       }}
-    postgres_allowed_cidrs_auto_enabled: false
+    releasy_postgres_allowed_cidrs_auto_enabled: false
   when:
-    - postgres_listen_addresses == 'tailscale'
+    - releasy_postgres_listen_addresses == 'tailscale'
     - not (tailscale_enabled | default(false))
-    - releasy_single_host_mode
-    - releasy_db_host_primary_ipv4 | length > 0
+    - releasy_postgres_single_host_mode
+    - releasy_postgres_db_host_primary_ipv4 | length > 0
 
 - name: Default Postgres listen address from primary inventory IP
   ansible.builtin.set_fact:
-    postgres_listen_addresses: "{{ releasy_db_host_primary_ipv4 }}"
+    releasy_postgres_listen_addresses: "{{ releasy_postgres_db_host_primary_ipv4 }}"
   when:
-    - postgres_listen_addresses == 'tailscale'
+    - releasy_postgres_listen_addresses == 'tailscale'
     - not (tailscale_enabled | default(false))
-    - releasy_db_host_primary_ipv4 | length > 0
+    - releasy_postgres_db_host_primary_ipv4 | length > 0
 
 - name: Assert IP is available for Postgres when Tailscale is disabled
   ansible.builtin.assert:
     that:
-      - releasy_db_host_primary_ipv4 | length > 0
+      - releasy_postgres_db_host_primary_ipv4 | length > 0
     quiet: true
     fail_msg: >-
-      postgres_listen_addresses is set to 'tailscale' but tailscale_enabled is
+      releasy_postgres_listen_addresses is set to 'tailscale' but tailscale_enabled is
       false and no usable IPv4 address was found for the DB host. Set
-      ansible_host to a private IPv4, or set postgres_listen_addresses and
-      postgres_allowed_cidrs explicitly, or enable Tailscale.
+      ansible_host to a private IPv4, or set releasy_postgres_listen_addresses and
+      releasy_postgres_allowed_cidrs explicitly, or enable Tailscale.
   when:
-    - postgres_listen_addresses == 'tailscale'
+    - releasy_postgres_listen_addresses == 'tailscale'
     - not (tailscale_enabled | default(false))
-    - not releasy_single_host_mode
+    - not releasy_postgres_single_host_mode
 
 - name: Get Tailscale IPv4 address
   ansible.builtin.command: tailscale ip -4
-  register: tailscale_ip
+  register: releasy_postgres_tailscale_ip
   changed_when: false
   failed_when: false
   retries: 10
   delay: 2
-  until: tailscale_ip.stdout | trim != ''
+  until: releasy_postgres_tailscale_ip.stdout | trim != ''
   when:
-    - postgres_listen_addresses == 'tailscale'
+    - releasy_postgres_listen_addresses == 'tailscale'
     - tailscale_enabled | default(false)
 
 - name: Resolve Postgres listen address
   ansible.builtin.set_fact:
-    postgres_listen_addresses_effective: >-
+    releasy_postgres_listen_addresses_effective: >-
       {{
-        (tailscale_ip.stdout_lines[0] | default(''))
-        if postgres_listen_addresses == 'tailscale'
-        else postgres_listen_addresses
+        (releasy_postgres_tailscale_ip.stdout_lines[0] | default(''))
+        if releasy_postgres_listen_addresses == 'tailscale'
+        else releasy_postgres_listen_addresses
       }}
 
 - name: Default allowed CIDRs
   ansible.builtin.set_fact:
-    postgres_allowed_cidrs_static: "{{ postgres_allowed_cidrs | default([]) }}"
-    postgres_allowed_cidrs_effective: "{{ postgres_allowed_cidrs | default([]) }}"
+    releasy_postgres_allowed_cidrs_static: "{{ releasy_postgres_allowed_cidrs | default([]) }}"
+    releasy_postgres_allowed_cidrs_effective: "{{ releasy_postgres_allowed_cidrs | default([]) }}"
 
 - name: Build auto allowed CIDRs from inventory IPs
   ansible.builtin.set_fact:
-    postgres_allowed_cidrs_auto: >-
+    releasy_postgres_allowed_cidrs_auto: >-
       {{
-        releasy_app_host_private_ipv4s
+        releasy_postgres_app_host_private_ipv4s
         | map('regex_replace', '$', '/32')
         | list
       }}
   when:
-    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - releasy_postgres_allowed_cidrs_auto_enabled | default(false)
     - not (tailscale_enabled | default(false))
-    - not releasy_single_host_mode
+    - not releasy_postgres_single_host_mode
 
 - name: Assert auto CIDRs from inventory discovered
   ansible.builtin.assert:
     that:
-      - postgres_allowed_cidrs_auto | default([]) | length > 0
+      - releasy_postgres_allowed_cidrs_auto | default([]) | length > 0
     quiet: true
     fail_msg: >-
-      postgres_allowed_cidrs_auto_enabled is true but no private IPv4
+      releasy_postgres_allowed_cidrs_auto_enabled is true but no private IPv4
       addresses were found for releasy_app hosts. Set ansible_host to private
-      IPv4 addresses, set postgres_allowed_cidrs explicitly, or enable
+      IPv4 addresses, set releasy_postgres_allowed_cidrs explicitly, or enable
       Tailscale.
   when:
-    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - releasy_postgres_allowed_cidrs_auto_enabled | default(false)
     - not (tailscale_enabled | default(false))
-    - not releasy_single_host_mode
+    - not releasy_postgres_single_host_mode
 
 - name: Collect app Tailscale hostnames
   ansible.builtin.set_fact:
-    postgres_app_tailscale_hostnames: >-
+    releasy_postgres_app_tailscale_hostnames: >-
       {{
         groups.get('releasy_app', [])
         | map('extract', hostvars, 'tailscale_hostname')
@@ -212,25 +218,25 @@
         | list
       }}
   when:
-    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - releasy_postgres_allowed_cidrs_auto_enabled | default(false)
     - tailscale_enabled | default(false)
 
 - name: Collect app Tailscale IPv4 addresses
   ansible.builtin.command: tailscale ip -4
-  register: postgres_app_tailscale_ips
+  register: releasy_postgres_app_tailscale_ips
   changed_when: false
   failed_when: false
   delegate_to: "{{ item }}"
   loop: "{{ groups.get('releasy_app', []) }}"
   when:
-    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - releasy_postgres_allowed_cidrs_auto_enabled | default(false)
     - tailscale_enabled | default(false)
 
 - name: Build auto allowed CIDRs from app hosts
   ansible.builtin.set_fact:
-    postgres_allowed_cidrs_auto: >-
+    releasy_postgres_allowed_cidrs_auto: >-
       {{
-        (postgres_app_tailscale_ips.results | default([]))
+        (releasy_postgres_app_tailscale_ips.results | default([]))
         | map(attribute='stdout_lines')
         | flatten
         | map('trim')
@@ -239,28 +245,28 @@
         | list
       }}
   when:
-    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - releasy_postgres_allowed_cidrs_auto_enabled | default(false)
     - tailscale_enabled | default(false)
 
 - name: Read Tailscale status for fallback
   ansible.builtin.command: tailscale status --json
-  register: postgres_tailscale_status
+  register: releasy_postgres_tailscale_status
   changed_when: false
   failed_when: false
-  when: postgres_allowed_cidrs_auto_enabled | default(false)
+  when: releasy_postgres_allowed_cidrs_auto_enabled | default(false)
     and (tailscale_enabled | default(false))
-    and (postgres_allowed_cidrs_auto | default([]) | length == 0)
-    and (postgres_app_tailscale_hostnames | default([]) | length > 0)
+    and (releasy_postgres_allowed_cidrs_auto | default([]) | length == 0)
+    and (releasy_postgres_app_tailscale_hostnames | default([]) | length > 0)
 
 - name: Build auto allowed CIDRs from Tailscale status
   ansible.builtin.set_fact:
-    postgres_allowed_cidrs_auto: >-
+    releasy_postgres_allowed_cidrs_auto: >-
       {{
         (
-          (postgres_tailscale_status.stdout | default('{}') | from_json).Peer
+          (releasy_postgres_tailscale_status.stdout | default('{}') | from_json).Peer
           | default({})
           | dict2items
-          | selectattr('value.HostName', 'in', postgres_app_tailscale_hostnames)
+          | selectattr('value.HostName', 'in', releasy_postgres_app_tailscale_hostnames)
           | map(attribute='value.TailscaleIPs')
           | list
         )
@@ -270,54 +276,54 @@
         | map('regex_replace', '$', '/32')
         | list
       }}
-  when: postgres_allowed_cidrs_auto_enabled | default(false)
+  when: releasy_postgres_allowed_cidrs_auto_enabled | default(false)
     and (tailscale_enabled | default(false))
-    and (postgres_allowed_cidrs_auto | default([]) | length == 0)
-    and (postgres_app_tailscale_hostnames | default([]) | length > 0)
-    and postgres_tailscale_status.rc == 0
+    and (releasy_postgres_allowed_cidrs_auto | default([]) | length == 0)
+    and (releasy_postgres_app_tailscale_hostnames | default([]) | length > 0)
+    and releasy_postgres_tailscale_status.rc == 0
 
 - name: Merge allowed CIDRs
   ansible.builtin.set_fact:
-    postgres_allowed_cidrs_effective: >-
+    releasy_postgres_allowed_cidrs_effective: >-
       {{
-        (postgres_allowed_cidrs_effective + (postgres_allowed_cidrs_auto | default([])))
+        (releasy_postgres_allowed_cidrs_effective + (releasy_postgres_allowed_cidrs_auto | default([])))
         | unique
       }}
-  when: postgres_allowed_cidrs_auto_enabled | default(false)
+  when: releasy_postgres_allowed_cidrs_auto_enabled | default(false)
 
 - name: Assert auto Tailscale CIDRs discovered
   ansible.builtin.assert:
     that:
-      - postgres_allowed_cidrs_auto | default([]) | length > 0
+      - releasy_postgres_allowed_cidrs_auto | default([]) | length > 0
     quiet: true
     fail_msg: >-
-      postgres_allowed_cidrs_auto_enabled is true but no Tailscale IPv4
+      releasy_postgres_allowed_cidrs_auto_enabled is true but no Tailscale IPv4
       addresses were discovered for releasy_app hosts. Ensure tailscaled is
       running on the app host(s) and 'tailscale ip -4' returns an IPv4, or
       verify that tailscale_hostname is set for releasy_app hosts.
   when:
-    - postgres_allowed_cidrs_auto_enabled | default(false)
+    - releasy_postgres_allowed_cidrs_auto_enabled | default(false)
     - tailscale_enabled | default(false)
 
 - name: Assert Tailscale listen address is available
   ansible.builtin.assert:
     that:
-      - postgres_listen_addresses_effective | length > 0
+      - releasy_postgres_listen_addresses_effective | length > 0
     fail_msg: >-
-      postgres_listen_addresses is set to 'tailscale' but no tailscale0
+      releasy_postgres_listen_addresses is set to 'tailscale' but no tailscale0
       IPv4 address was found. Ensure tailscaled is running and
       'tailscale ip -4' returns an address, or set an explicit listen
       address.
     quiet: true
-  when: postgres_listen_addresses == 'tailscale'
+  when: releasy_postgres_listen_addresses == 'tailscale'
 
 - name: Assert allowed CIDRs for remote listens (effective)
   ansible.builtin.assert:
     that:
-      - postgres_allowed_cidrs_effective | length > 0
+      - releasy_postgres_allowed_cidrs_effective | length > 0
     quiet: true
-    fail_msg: "postgres_allowed_cidrs must include at least one CIDR for remote access"
-  when: postgres_listen_addresses_effective not in ["localhost", "127.0.0.1", "::1"]
+    fail_msg: "releasy_postgres_allowed_cidrs must include at least one CIDR for remote access"
+  when: releasy_postgres_listen_addresses_effective not in ["localhost", "127.0.0.1", "::1"]
 
 - name: Install Postgres packages
   ansible.builtin.apt:
@@ -335,23 +341,23 @@
 
 - name: Default deny incoming (optional)
   ansible.builtin.command: ufw default deny incoming
-  register: postgres_ufw_default_deny
+  register: releasy_postgres_ufw_default_deny
   when: postgres_firewall_enabled | default(false)
     and postgres_firewall_default_deny_incoming | default(false)
-  changed_when: "'changed' in (postgres_ufw_default_deny.stdout | lower)"
+  changed_when: "'changed' in (releasy_postgres_ufw_default_deny.stdout | lower)"
 
 - name: Remove legacy OpenSSH allow rules
   ansible.builtin.command: ufw delete allow OpenSSH
-  register: postgres_ufw_delete_openssh
-  changed_when: "'Skipping' not in postgres_ufw_delete_openssh.stdout"
+  register: releasy_postgres_ufw_delete_openssh
+  changed_when: "'Skipping' not in releasy_postgres_ufw_delete_openssh.stdout"
   failed_when: false
   when: postgres_firewall_enabled | default(false)
     and postgres_firewall_allow_ssh | default(true)
 
 - name: Remove legacy SSH deny rules
   ansible.builtin.command: "ufw delete deny {{ item }}"
-  register: postgres_ufw_delete_ssh_denies
-  changed_when: "'Skipping' not in postgres_ufw_delete_ssh_denies.stdout"
+  register: releasy_postgres_ufw_delete_ssh_denies
+  changed_when: "'Skipping' not in releasy_postgres_ufw_delete_ssh_denies.stdout"
   failed_when: false
   loop:
     - "22/tcp"
@@ -361,8 +367,8 @@
 
 - name: Allow SSH from specific sources
   ansible.builtin.command: "ufw allow from {{ item }} to any port 22 proto tcp"
-  register: postgres_ufw_allow_ssh_result
-  changed_when: "'Skipping' not in postgres_ufw_allow_ssh_result.stdout"
+  register: releasy_postgres_ufw_allow_ssh_result
+  changed_when: "'Skipping' not in releasy_postgres_ufw_allow_ssh_result.stdout"
   loop: "{{ postgres_firewall_ssh_sources | default([]) }}"
   when: postgres_firewall_enabled | default(false)
     and postgres_firewall_allow_ssh | default(true)
@@ -370,32 +376,32 @@
 
 - name: Allow SSH (fallback)
   ansible.builtin.command: ufw allow OpenSSH
-  register: postgres_ufw_allow_openssh
+  register: releasy_postgres_ufw_allow_openssh
   when: postgres_firewall_enabled | default(false)
     and postgres_firewall_allow_ssh | default(true)
     and (postgres_firewall_ssh_sources | default([]) | length == 0)
-  changed_when: "'Skipping' not in postgres_ufw_allow_openssh.stdout"
+  changed_when: "'Skipping' not in releasy_postgres_ufw_allow_openssh.stdout"
 
 - name: Explicitly deny SSH from other sources
   ansible.builtin.command: ufw deny 22/tcp
-  register: postgres_ufw_deny_ssh
+  register: releasy_postgres_ufw_deny_ssh
   when: postgres_firewall_enabled | default(false)
     and postgres_firewall_allow_ssh | default(true)
     and postgres_firewall_explicit_deny_ssh | default(true)
-  changed_when: "'Skipping' not in postgres_ufw_deny_ssh.stdout"
+  changed_when: "'Skipping' not in releasy_postgres_ufw_deny_ssh.stdout"
 
 - name: Allow Postgres from app CIDRs
   ansible.builtin.command: "ufw allow from {{ item }} to any port {{ postgres_port }} proto tcp"
-  register: postgres_ufw_allow_db
-  changed_when: "'Skipping' not in postgres_ufw_allow_db.stdout"
-  loop: "{{ postgres_allowed_cidrs_effective | default([]) }}"
+  register: releasy_postgres_ufw_allow_db
+  changed_when: "'Skipping' not in releasy_postgres_ufw_allow_db.stdout"
+  loop: "{{ releasy_postgres_allowed_cidrs_effective | default([]) }}"
   when: postgres_firewall_enabled | default(false)
-    and (postgres_allowed_cidrs_effective | default([]) | length > 0)
+    and (releasy_postgres_allowed_cidrs_effective | default([]) | length > 0)
 
 - name: Allow Postgres from Keycloak CIDRs
   ansible.builtin.command: "ufw allow from {{ item }} to any port {{ postgres_port }} proto tcp"
-  register: postgres_ufw_allow_keycloak
-  changed_when: "'Skipping' not in postgres_ufw_allow_keycloak.stdout"
+  register: releasy_postgres_ufw_allow_keycloak
+  changed_when: "'Skipping' not in releasy_postgres_ufw_allow_keycloak.stdout"
   loop: "{{ keycloak_db_allowed_cidrs | default([]) }}"
   when: keycloak_enabled | default(false)
     and postgres_firewall_enabled | default(false)
@@ -415,64 +421,64 @@
 
 - name: Fetch Postgres config path
   ansible.builtin.command: sudo -u postgres psql -tAc "SHOW config_file"
-  register: postgres_config_file
+  register: releasy_postgres_config_file
   changed_when: false
 
 - name: Set Postgres config directory fact
   ansible.builtin.set_fact:
-    postgres_config_dir: "{{ postgres_config_file.stdout | trim | dirname }}"
+    releasy_postgres_config_dir: "{{ releasy_postgres_config_file.stdout | trim | dirname }}"
 
 - name: Configure listen addresses
   ansible.builtin.lineinfile:
-    path: "{{ postgres_config_file.stdout | trim }}"
+    path: "{{ releasy_postgres_config_file.stdout | trim }}"
     regexp: "^#?listen_addresses\\s*="
-    line: "listen_addresses = '{{ postgres_listen_addresses_effective }}'"
+    line: "listen_addresses = '{{ releasy_postgres_listen_addresses_effective }}'"
   notify: Restart postgres
 
 - name: Configure port
   ansible.builtin.lineinfile:
-    path: "{{ postgres_config_file.stdout | trim }}"
+    path: "{{ releasy_postgres_config_file.stdout | trim }}"
     regexp: "^#?port\\s*="
     line: "port = {{ postgres_port }}"
   notify: Restart postgres
 
 - name: Allow app connections in pg_hba.conf (static CIDRs)
   ansible.builtin.lineinfile:
-    path: "{{ postgres_config_dir }}/pg_hba.conf"
+    path: "{{ releasy_postgres_config_dir }}/pg_hba.conf"
     regexp: "^host\\s+{{ postgres_app_db }}\\s+{{ postgres_app_user }}\\s+{{ item | regex_escape }}\\s+"
     line: "host {{ postgres_app_db }} {{ postgres_app_user }} {{ item }} scram-sha-256"
     insertafter: "^#?\\s*TYPE\\s+DATABASE\\s+USER\\s+ADDRESS\\s+METHOD"
-  loop: "{{ postgres_allowed_cidrs_static }}"
+  loop: "{{ releasy_postgres_allowed_cidrs_static }}"
   notify: Restart postgres
 
 - name: Remove legacy app Tailscale CIDRs in pg_hba.conf
   ansible.builtin.lineinfile:
-    path: "{{ postgres_config_dir }}/pg_hba.conf"
+    path: "{{ releasy_postgres_config_dir }}/pg_hba.conf"
     regexp: '^host\s+{{ postgres_app_db }}\s+{{ postgres_app_user }}\s+100\.[0-9]+\.[0-9]+\.[0-9]+/32\s+scram-sha-256\s*$'
     state: absent
-  when: postgres_allowed_cidrs_auto_enabled | default(false)
+  when: releasy_postgres_allowed_cidrs_auto_enabled | default(false)
   notify: Restart postgres
 
 - name: Build auto app CIDR block for pg_hba.conf
   ansible.builtin.set_fact:
-    postgres_allowed_cidrs_auto_block: |-
-      {% for cidr in postgres_allowed_cidrs_auto | default([]) %}
+    releasy_postgres_allowed_cidrs_auto_block: |-
+      {% for cidr in releasy_postgres_allowed_cidrs_auto | default([]) %}
       host {{ postgres_app_db }} {{ postgres_app_user }} {{ cidr }} scram-sha-256
       {% endfor %}
-  when: postgres_allowed_cidrs_auto_enabled | default(false)
+  when: releasy_postgres_allowed_cidrs_auto_enabled | default(false)
 
 - name: Allow app connections in pg_hba.conf (auto Tailscale CIDRs)
   ansible.builtin.blockinfile:
-    path: "{{ postgres_config_dir }}/pg_hba.conf"
+    path: "{{ releasy_postgres_config_dir }}/pg_hba.conf"
     marker: "# {mark} RELEASY APP TAILSCALE CIDRS"
     insertafter: "^#?\\s*TYPE\\s+DATABASE\\s+USER\\s+ADDRESS\\s+METHOD"
-    block: "{{ postgres_allowed_cidrs_auto_block | trim }}"
-  when: postgres_allowed_cidrs_auto_enabled | default(false)
+    block: "{{ releasy_postgres_allowed_cidrs_auto_block | trim }}"
+  when: releasy_postgres_allowed_cidrs_auto_enabled | default(false)
   notify: Restart postgres
 
 - name: Allow Keycloak connections in pg_hba.conf
   ansible.builtin.lineinfile:
-    path: "{{ postgres_config_dir }}/pg_hba.conf"
+    path: "{{ releasy_postgres_config_dir }}/pg_hba.conf"
     regexp: "^host\\s+{{ keycloak_db_name }}\\s+{{ keycloak_db_user }}\\s+{{ item | regex_escape }}\\s+"
     line: "host {{ keycloak_db_name }} {{ keycloak_db_user }} {{ item }} scram-sha-256"
     insertafter: "^#?\\s*TYPE\\s+DATABASE\\s+USER\\s+ADDRESS\\s+METHOD"
@@ -483,55 +489,59 @@
 
 - name: Check if app role exists
   ansible.builtin.command: sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{ postgres_app_user }}'"
-  register: postgres_role_exists
+  register: releasy_postgres_role_exists
   changed_when: false
 
 - name: Create app role
   ansible.builtin.command: sudo -u postgres psql -c "CREATE ROLE {{ postgres_app_user }} LOGIN PASSWORD '{{ postgres_app_password }}'"
-  when: postgres_role_exists.stdout | trim != "1"
+  when: releasy_postgres_role_exists.stdout | trim != "1"
   no_log: true
+  changed_when: true
 
 - name: Ensure app role password
   ansible.builtin.command: sudo -u postgres psql -c "ALTER ROLE {{ postgres_app_user }} PASSWORD '{{ postgres_app_password }}'"
-  when: postgres_role_exists.stdout | trim == "1"
+  when: releasy_postgres_role_exists.stdout | trim == "1"
   no_log: true
   changed_when: false
 
 - name: Check if app database exists
   ansible.builtin.command: sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{ postgres_app_db }}'"
-  register: postgres_db_exists
+  register: releasy_postgres_db_exists
   changed_when: false
 
 - name: Create app database
   ansible.builtin.command: sudo -u postgres psql -c "CREATE DATABASE {{ postgres_app_db }} OWNER {{ postgres_app_user }}"
-  when: postgres_db_exists.stdout | trim != "1"
+  when: releasy_postgres_db_exists.stdout | trim != "1"
+  changed_when: true
 
 - name: Check if Keycloak role exists
   ansible.builtin.command: sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{ keycloak_db_user }}'"
-  register: keycloak_role_exists
+  register: releasy_postgres_keycloak_role_exists
   changed_when: false
   when: keycloak_enabled | default(false)
 
 - name: Create Keycloak role
   ansible.builtin.command: sudo -u postgres psql -c "CREATE ROLE {{ keycloak_db_user }} LOGIN PASSWORD '{{ keycloak_db_password }}'"
   when: keycloak_enabled | default(false)
-    and keycloak_role_exists.stdout | trim != "1"
+    and releasy_postgres_keycloak_role_exists.stdout | trim != "1"
   no_log: true
+  changed_when: true
 
 - name: Ensure Keycloak role password
   ansible.builtin.command: sudo -u postgres psql -c "ALTER ROLE {{ keycloak_db_user }} PASSWORD '{{ keycloak_db_password }}'"
   when: keycloak_enabled | default(false)
-    and keycloak_role_exists.stdout | trim == "1"
+    and releasy_postgres_keycloak_role_exists.stdout | trim == "1"
   no_log: true
   changed_when: false
 
 - name: Check if Keycloak database exists
   ansible.builtin.command: sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{ keycloak_db_name }}'"
-  register: keycloak_db_exists
+  register: releasy_postgres_keycloak_db_exists
   changed_when: false
   when: keycloak_enabled | default(false)
 
 - name: Create Keycloak database
   ansible.builtin.command: sudo -u postgres psql -c "CREATE DATABASE {{ keycloak_db_name }} OWNER {{ keycloak_db_user }}"
   when: keycloak_enabled | default(false)
-    and keycloak_db_exists.stdout | trim != "1"
+    and releasy_postgres_keycloak_db_exists.stdout | trim != "1"
+  changed_when: true

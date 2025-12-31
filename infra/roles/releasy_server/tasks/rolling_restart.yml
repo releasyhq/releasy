@@ -13,7 +13,12 @@
 
 - name: Check server health endpoint
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ (releasy_server_instance_port_base | default(releasy_port) | int) + instance_index }}{{ releasy_server_healthcheck_path | default('/openapi.json') }}"
+    url: >-
+      {{
+        'http://127.0.0.1:' ~
+        ((releasy_server_instance_port_base | default(releasy_port) | int) + instance_index) ~
+        (releasy_server_healthcheck_path | default('/openapi.json'))
+      }}
     status_code: 200
     timeout: 5
   register: releasy_server_healthcheck

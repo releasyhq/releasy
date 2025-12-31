@@ -3,6 +3,6 @@ network:
   ethernets:
     {{ releasy_extra_ip_iface }}:
       addresses:
-{% for addr in releasy_extra_ip_netplan_addresses %}
+{% for addr in releasy_server_extra_ip_netplan_addresses %}
         - "{{ addr }}"
 {% endfor %}

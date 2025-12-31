@@ -39,7 +39,7 @@ http:
     releasy-server:
       loadBalancer:
         servers:
-        {% for upstream in releasy_server_upstreams %}
+        {% for upstream in traefik_releasy_server_upstreams %}
           - url: "{{ upstream }}"
         {% endfor %}
 {% if keycloak_public_host | default('') and (keycloak_upstreams | default([]) | length > 0) %}
