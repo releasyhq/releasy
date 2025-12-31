@@ -71,7 +71,7 @@
     releasy_postgres_app_host_ipv4s: >-
       {{
         releasy_postgres_app_host_addrs
-        | select('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')
+        | select('match', '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
         | list
       }}
     releasy_postgres_app_host_private_ipv4s: >-
@@ -395,7 +395,7 @@
         | map(attribute='stdout_lines')
         | flatten
         | map('trim')
-        | select('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')
+        | select('match', '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
         | map('regex_replace', '$', '/32')
         | list
       }}
