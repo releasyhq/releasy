@@ -147,6 +147,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          description="Controlled software releases for B2B."
           tags=$(cat <<'EOF'
           ${{ steps.meta.outputs.tags }}
           ${{ needs.prepare.outputs.extra_tags }}
@@ -156,6 +157,8 @@ jobs:
             [ -z "$tag" ] && continue
             docker buildx imagetools create \
               -t "$tag" \
+              --annotation "index:org.opencontainers.image.description=$description" \
+              --annotation "manifest-descriptor:org.opencontainers.image.description=$description" \
               "${tag}-amd64" \
               "${tag}-arm64"
           done <<< "$tags"
