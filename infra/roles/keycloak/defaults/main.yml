@@ -26,6 +26,7 @@ keycloak_realm_import_dest: "realm.json"
 keycloak_start_args: []
 keycloak_realm_name: "releasy"
 keycloak_portal_client_id: "releasy-portal"
+keycloak_portal_client_secret: ""
 keycloak_portal_root_url: "https://portal.example.com"
 keycloak_portal_redirect_uris:
   - "{{ keycloak_portal_root_url }}/*"

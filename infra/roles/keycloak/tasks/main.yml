@@ -13,6 +13,16 @@
       - keycloak_instances | length > 0
     quiet: true
 
+- name: Assert realm client secret for template import
+  ansible.builtin.assert:
+    that:
+      - keycloak_portal_client_secret is defined
+      - keycloak_portal_client_secret | length > 0
+    fail_msg: "keycloak_portal_client_secret must be set when realm import uses the template."
+    quiet: true
+  when: keycloak_realm_import_enabled | default(false)
+    and keycloak_realm_import_source == "template"
+
 - name: Install Docker
   ansible.builtin.apt:
     name:

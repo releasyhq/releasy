@@ -45,6 +45,15 @@
       {%-   endif -%}
       {%- endfor -%}
       {{ addrs }}
+    releasy_postgres_keycloak_host_addrs: >-
+      {%- set addrs = [] -%}
+      {%- for host in groups.get('keycloak', []) -%}
+      {%-   set addr = (hostvars[host].ansible_host | default(host, true)) | string | trim -%}
+      {%-   if addr | length > 0 -%}
+      {%-     set _ = addrs.append(addr) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ addrs }}
 
 - name: Determine single-host mode
   ansible.builtin.set_fact:
@@ -68,6 +77,12 @@
     releasy_postgres_app_host_private_ipv4s: >-
       {{
         releasy_postgres_app_host_addrs
+        | select('match', '^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)')
+        | list
+      }}
+    releasy_postgres_keycloak_host_private_ipv4s: >-
+      {{
+        releasy_postgres_keycloak_host_addrs
         | select('match', '^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)')
         | list
       }}
@@ -325,6 +340,128 @@
     fail_msg: "releasy_postgres_allowed_cidrs must include at least one CIDR for remote access"
   when: releasy_postgres_listen_addresses_effective not in ["localhost", "127.0.0.1", "::1"]
 
+- name: Default Keycloak allowed CIDRs
+  ansible.builtin.set_fact:
+    releasy_postgres_keycloak_db_allowed_cidrs_static: "{{ keycloak_db_allowed_cidrs | default([]) }}"
+    releasy_postgres_keycloak_db_allowed_cidrs_effective: "{{ keycloak_db_allowed_cidrs | default([]) }}"
+    releasy_postgres_keycloak_db_allowed_cidrs_auto_enabled: >-
+      {{ (keycloak_db_allowed_cidrs | default([]) | length == 0) }}
+  when: keycloak_enabled | default(false)
+
+- name: Build auto Keycloak CIDRs from private IPv4s
+  ansible.builtin.set_fact:
+    releasy_postgres_keycloak_db_allowed_cidrs_auto: >-
+      {{
+        releasy_postgres_keycloak_host_private_ipv4s
+        | map('regex_replace', '$', '/32')
+        | list
+      }}
+  when: keycloak_enabled | default(false)
+    and releasy_postgres_keycloak_db_allowed_cidrs_auto_enabled | default(false)
+    and not (tailscale_enabled | default(false))
+
+- name: Collect Keycloak Tailscale hostnames
+  ansible.builtin.set_fact:
+    releasy_postgres_keycloak_tailscale_hostnames: >-
+      {{
+        groups.get('keycloak', [])
+        | map('extract', hostvars, 'tailscale_hostname')
+        | select('string')
+        | map('trim')
+        | select('match', '.+')
+        | list
+      }}
+  when: keycloak_enabled | default(false)
+    and releasy_postgres_keycloak_db_allowed_cidrs_auto_enabled | default(false)
+    and tailscale_enabled | default(false)
+
+- name: Collect Keycloak Tailscale IPv4 addresses
+  ansible.builtin.command: tailscale ip -4
+  register: releasy_postgres_keycloak_tailscale_ips
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ item }}"
+  loop: "{{ groups.get('keycloak', []) }}"
+  when: keycloak_enabled | default(false)
+    and releasy_postgres_keycloak_db_allowed_cidrs_auto_enabled | default(false)
+    and tailscale_enabled | default(false)
+    and (hostvars[item].tailscale_enabled | default(false))
+
+- name: Build auto Keycloak CIDRs from Tailscale IPs
+  ansible.builtin.set_fact:
+    releasy_postgres_keycloak_db_allowed_cidrs_auto: >-
+      {{
+        (releasy_postgres_keycloak_tailscale_ips.results | default([]))
+        | map(attribute='stdout_lines')
+        | flatten
+        | map('trim')
+        | select('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')
+        | map('regex_replace', '$', '/32')
+        | list
+      }}
+  when: keycloak_enabled | default(false)
+    and releasy_postgres_keycloak_db_allowed_cidrs_auto_enabled | default(false)
+    and tailscale_enabled | default(false)
+
+- name: Read Tailscale status for Keycloak fallback
+  ansible.builtin.command: tailscale status --json
+  register: releasy_postgres_keycloak_tailscale_status
+  changed_when: false
+  failed_when: false
+  when: keycloak_enabled | default(false)
+    and releasy_postgres_keycloak_db_allowed_cidrs_auto_enabled | default(false)
+    and tailscale_enabled | default(false)
+    and (releasy_postgres_keycloak_db_allowed_cidrs_auto | default([]) | length == 0)
+    and (releasy_postgres_keycloak_tailscale_hostnames | default([]) | length > 0)
+
+- name: Build auto Keycloak CIDRs from Tailscale status
+  ansible.builtin.set_fact:
+    releasy_postgres_keycloak_db_allowed_cidrs_auto: >-
+      {{
+        (
+          (releasy_postgres_keycloak_tailscale_status.stdout | default('{}') | from_json).Peer
+          | default({})
+          | dict2items
+          | selectattr('value.HostName', 'in', releasy_postgres_keycloak_tailscale_hostnames)
+          | map(attribute='value.TailscaleIPs')
+          | list
+        )
+        | flatten
+        | map('trim')
+        | select('match', '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')
+        | map('regex_replace', '$', '/32')
+        | list
+      }}
+  when: keycloak_enabled | default(false)
+    and releasy_postgres_keycloak_db_allowed_cidrs_auto_enabled | default(false)
+    and tailscale_enabled | default(false)
+    and (releasy_postgres_keycloak_db_allowed_cidrs_auto | default([]) | length == 0)
+    and (releasy_postgres_keycloak_tailscale_hostnames | default([]) | length > 0)
+    and releasy_postgres_keycloak_tailscale_status.rc == 0
+
+- name: Merge Keycloak allowed CIDRs
+  ansible.builtin.set_fact:
+    releasy_postgres_keycloak_db_allowed_cidrs_effective: >-
+      {{
+        (releasy_postgres_keycloak_db_allowed_cidrs_effective
+          + (releasy_postgres_keycloak_db_allowed_cidrs_auto | default([])))
+        | unique
+      }}
+  when: keycloak_enabled | default(false)
+    and releasy_postgres_keycloak_db_allowed_cidrs_auto_enabled | default(false)
+
+- name: Assert Keycloak allowed CIDRs discovered
+  ansible.builtin.assert:
+    that:
+      - releasy_postgres_keycloak_db_allowed_cidrs_effective | length > 0
+    quiet: true
+    fail_msg: >-
+      keycloak_db_allowed_cidrs is empty and no auto CIDRs were discovered. Set
+      keycloak_db_allowed_cidrs explicitly or ensure Tailscale is running on the
+      Keycloak host(s).
+  when: keycloak_enabled | default(false)
+    and releasy_postgres_keycloak_db_allowed_cidrs_auto_enabled | default(false)
+
 - name: Install Postgres packages
   ansible.builtin.apt:
     name:
@@ -402,10 +539,10 @@
   ansible.builtin.command: "ufw allow from {{ item }} to any port {{ postgres_port }} proto tcp"
   register: releasy_postgres_ufw_allow_keycloak
   changed_when: "'Skipping' not in releasy_postgres_ufw_allow_keycloak.stdout"
-  loop: "{{ keycloak_db_allowed_cidrs | default([]) }}"
+  loop: "{{ releasy_postgres_keycloak_db_allowed_cidrs_effective | default([]) }}"
   when: keycloak_enabled | default(false)
     and postgres_firewall_enabled | default(false)
-    and (keycloak_db_allowed_cidrs | default([]) | length > 0)
+    and (releasy_postgres_keycloak_db_allowed_cidrs_effective | default([]) | length > 0)
 
 - name: Enable UFW if requested
   ansible.builtin.command: ufw --force enable
@@ -482,9 +619,9 @@
     regexp: "^host\\s+{{ keycloak_db_name }}\\s+{{ keycloak_db_user }}\\s+{{ item | regex_escape }}\\s+"
     line: "host {{ keycloak_db_name }} {{ keycloak_db_user }} {{ item }} scram-sha-256"
     insertafter: "^#?\\s*TYPE\\s+DATABASE\\s+USER\\s+ADDRESS\\s+METHOD"
-  loop: "{{ keycloak_db_allowed_cidrs | default([]) }}"
+  loop: "{{ releasy_postgres_keycloak_db_allowed_cidrs_effective | default([]) }}"
   when: keycloak_enabled | default(false)
-    and (keycloak_db_allowed_cidrs | default([]) | length > 0)
+    and (releasy_postgres_keycloak_db_allowed_cidrs_effective | default([]) | length > 0)
   notify: Restart postgres
 
 - name: Check if app role exists

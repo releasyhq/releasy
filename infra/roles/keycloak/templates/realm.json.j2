@@ -23,6 +23,8 @@
       "clientId": "{{ keycloak_portal_client_id }}",
       "name": "Releasy Portal",
       "protocol": "openid-connect",
+      "clientAuthenticatorType": "client-secret",
+      "secret": "{{ keycloak_portal_client_secret }}",
       "publicClient": false,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
