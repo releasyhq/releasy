@@ -178,7 +178,7 @@ jobs:
 
       - name: Build (no push)
         if: inputs.push_images != true
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ${{ steps.docker.outputs.context }}
           file: ${{ steps.docker.outputs.dockerfile }}
@@ -196,7 +196,7 @@ jobs:
 
       - name: Build and push
         if: inputs.push_images
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ${{ steps.docker.outputs.context }}
           file: ${{ steps.docker.outputs.dockerfile }}
