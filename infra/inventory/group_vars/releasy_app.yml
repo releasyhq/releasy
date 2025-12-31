@@ -12,7 +12,7 @@ releasy_server_instance_port_base: "{{ releasy_port }}"
 releasy_server_instances:
   - blue
   - green
-releasy_server_image: "ghcr.io/releasyhq/releasy-server:latest"
+releasy_server_image: "ghcr.io/releasyhq/releasy:latest"
 releasy_server_container_name_prefix: "releasy-server"
 releasy_server_healthcheck_path: "/ready"
 releasy_server_healthcheck_timeout: 60
