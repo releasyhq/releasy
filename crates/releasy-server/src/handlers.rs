@@ -4,6 +4,7 @@ pub(crate) mod audit;
 pub(crate) mod auth;
 pub(crate) mod downloads;
 pub(crate) mod entitlements;
+pub(crate) mod health;
 pub(crate) mod keys;
 pub(crate) mod releases;
 
@@ -26,6 +27,7 @@ pub(crate) use entitlements::{
     EntitlementUpdateRequest, create_entitlement, delete_entitlement, list_entitlements,
     update_entitlement,
 };
+pub(crate) use health::{HealthResponse, health_check};
 pub(crate) use keys::{
     AdminCreateKeyRequest, AdminCreateKeyResponse, AdminRevokeKeyRequest, AdminRevokeKeyResponse,
     admin_create_key, admin_revoke_key,

@@ -10,8 +10,8 @@ use crate::handlers::{
     ArtifactPresignResponse, ArtifactRegisterRequest, ArtifactRegisterResponse, ArtifactSummary,
     AuditEventListQuery, AuditEventListResponse, AuditEventResponse, DownloadTokenRequest,
     DownloadTokenResponse, EntitlementCreateRequest, EntitlementListQuery, EntitlementListResponse,
-    EntitlementResponse, EntitlementUpdateRequest, ReleaseCreateRequest, ReleaseListQuery,
-    ReleaseListResponse, ReleaseResponse,
+    EntitlementResponse, EntitlementUpdateRequest, HealthResponse, ReleaseCreateRequest,
+    ReleaseListQuery, ReleaseListResponse, ReleaseResponse,
 };
 use crate::models::ApiKeyIntrospection;
 
@@ -41,6 +41,7 @@ use crate::models::ApiKeyIntrospection;
         crate::handlers::downloads::create_download_token,
         crate::handlers::downloads::resolve_download_token,
         crate::handlers::auth::auth_introspect,
+        crate::handlers::health::health_check,
         crate::openapi::openapi_json
     ),
     components(
@@ -61,6 +62,7 @@ use crate::models::ApiKeyIntrospection;
             AuditEventResponse,
             AuditEventListResponse,
             AuditEventListQuery,
+            HealthResponse,
             ReleaseCreateRequest,
             ReleaseResponse,
             ReleaseListResponse,

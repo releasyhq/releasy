@@ -632,3 +632,34 @@ async fn download_token_expired_returns_not_found() {
     let response = send_empty(&app, "GET", &uri, &[]).await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn health_endpoint_returns_ok() {
+    let (app, _db) = setup_app().await;
+
+    let response = send_empty(&app, "GET", "/health", &[]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    assert_eq!(body.get("status").and_then(Value::as_str), Some("ok"));
+}
+
+#[tokio::test]
+async fn health_endpoint_reports_db_unavailable() {
+    let (app, db) = setup_app().await;
+
+    match &db {
+        Database::Sqlite(pool) => {
+            pool.close().await;
+        }
+        Database::Postgres(_) => panic!("sqlite expected"),
+    }
+
+    let response = send_empty(&app, "GET", "/health", &[]).await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = response_json(response).await;
+    let error = body.get("error").and_then(Value::as_object).expect("error");
+    assert_eq!(
+        error.get("code").and_then(Value::as_str),
+        Some("service_unavailable")
+    );
+}

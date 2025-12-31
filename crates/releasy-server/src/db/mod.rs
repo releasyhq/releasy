@@ -91,6 +91,16 @@ impl Database {
                 .map_err(|err| format!("database migration failed: {err}"))
         })
     }
+
+    pub async fn ping(&self) -> Result<(), String> {
+        with_db!(self, |pool| {
+            sqlx::query("SELECT 1")
+                .execute(pool)
+                .await
+                .map(|_| ())
+                .map_err(|err| format!("database ping failed: {err}"))
+        })
+    }
 }
 
 #[cfg(test)]
