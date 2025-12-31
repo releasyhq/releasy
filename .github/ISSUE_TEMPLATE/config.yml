@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue
+    url: https://github.com/releasyhq/releasy/security/advisories/new
+    about: Please report security vulnerabilities via GitHub Security Advisories.
+  - name: Questions
+    url: https://github.com/releasyhq/releasy/discussions
+    about: Please use Discussions for questions and support.

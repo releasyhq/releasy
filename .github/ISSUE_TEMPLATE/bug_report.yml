@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a reproducible bug.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks for helping us improve the project. Please fill out the details below."
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "Commit SHA, tag, or release version."
+      placeholder: "e.g. v0.1.0 or 1a2b3c4"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: "Include exact commands, configuration, and data used."
+      placeholder: "1. ...\n2. ...\n3. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and traces
+      description: "Add relevant logs, stack traces, or screenshots."
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: "Anything else that might help us debug."
+    validations:
+      required: false
