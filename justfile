@@ -1,5 +1,8 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
+default:
+  @just --list
+
 fmt:
   cargo fmt --all
 
