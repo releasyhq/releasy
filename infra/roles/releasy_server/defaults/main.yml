@@ -1,0 +1,6 @@
+---
+releasy_database_url: >-
+  {{ "postgres://" ~ (postgres_app_user | urlencode) ~ ":" ~
+     (postgres_app_password | urlencode) ~ "@" ~
+     (releasy_server_postgres_host | default(postgres_host, true)) ~ ":" ~
+     postgres_port ~ "/" ~ postgres_app_db }}
