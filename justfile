@@ -42,5 +42,8 @@ dev-server-postgres: dev-db-postgres
 coverage:
   cargo llvm-cov --workspace --all-features --html
 
+docker-build:
+  DOCKER_BUILDKIT=1 docker build -t releasy-server:dev .
+
 docs-lint:
   npm run lint:md
