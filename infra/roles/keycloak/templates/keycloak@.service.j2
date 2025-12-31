@@ -20,7 +20,7 @@ ExecStart=/usr/bin/docker run --rm \
 {% if keycloak_docker_extra_args | default([]) | length > 0 %}
   {{ keycloak_docker_extra_args | join(' ') }} \
 {% endif %}
-  {{ keycloak_image }} start{% if keycloak_realm_import_enabled | default(false) %} --import-realm{% endif %}{% if keycloak_start_args | length > 0 %} {{ keycloak_start_args | join(' ') }}{% endif %}
+  {{ keycloak_image }} start{{ ' --import-realm' if keycloak_realm_import_enabled | default(false) else '' }}{{ (' ' ~ (keycloak_start_args | join(' '))) if (keycloak_start_args | length > 0) else '' }}
 ExecStop=/usr/bin/docker stop {{ keycloak_container_name_prefix }}-%i
 
 [Install]
