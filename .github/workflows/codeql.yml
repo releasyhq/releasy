@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   security-events: write
 
 jobs:
@@ -18,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
       security-events: write
     strategy:
       fail-fast: false
