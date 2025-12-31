@@ -28,6 +28,7 @@ pub(crate) struct AdminCreateCustomerResponse {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
+#[schema(min_properties = 1)]
 pub(crate) struct AdminUpdateCustomerRequest {
     pub(crate) name: Option<String>,
     pub(crate) plan: Option<Option<String>>,
@@ -316,11 +317,12 @@ pub async fn update_customer(
     let plan = match payload.plan {
         Some(Some(value)) => {
             let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(ApiError::bad_request("plan must not be empty"));
-            }
             has_update = true;
-            Some(Some(trimmed.to_string()))
+            if trimmed.is_empty() {
+                Some(None)
+            } else {
+                Some(Some(trimmed.to_string()))
+            }
         }
         Some(None) => {
             has_update = true;

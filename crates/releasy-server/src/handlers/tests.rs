@@ -389,6 +389,117 @@ async fn update_customer_rejects_empty_payload() {
 }
 
 #[tokio::test]
+async fn update_customer_clears_plan_on_empty_string() {
+    let state = setup_state().await;
+    let now = now_ts_or_internal().expect("now");
+
+    let customer = Customer {
+        id: "customer-plan-clear".to_string(),
+        name: "Plan Clear".to_string(),
+        plan: Some("Pro".to_string()),
+        allowed_prefixes: None,
+        created_at: now,
+        suspended_at: None,
+    };
+    state
+        .db
+        .insert_customer(&customer)
+        .await
+        .expect("insert customer");
+
+    let payload = AdminUpdateCustomerRequest {
+        name: None,
+        plan: Some(Some("   ".to_string())),
+        suspended: None,
+    };
+
+    let Json(response) = update_customer(
+        State(state),
+        admin_headers(),
+        Path(customer.id.clone()),
+        Json(payload),
+    )
+    .await
+    .expect("update customer");
+
+    assert!(response.plan.is_none());
+}
+
+#[tokio::test]
+async fn update_customer_rejects_empty_name() {
+    let state = setup_state().await;
+    let now = now_ts_or_internal().expect("now");
+
+    let customer = Customer {
+        id: "customer-empty-name".to_string(),
+        name: "Has Name".to_string(),
+        plan: None,
+        allowed_prefixes: None,
+        created_at: now,
+        suspended_at: None,
+    };
+    state
+        .db
+        .insert_customer(&customer)
+        .await
+        .expect("insert customer");
+
+    let payload = AdminUpdateCustomerRequest {
+        name: Some("  ".to_string()),
+        plan: None,
+        suspended: None,
+    };
+
+    let err = update_customer(
+        State(state),
+        admin_headers(),
+        Path(customer.id.clone()),
+        Json(payload),
+    )
+    .await
+    .expect_err("empty name");
+
+    assert_eq!(err.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn update_customer_unsuspends_customer() {
+    let state = setup_state().await;
+    let now = now_ts_or_internal().expect("now");
+
+    let customer = Customer {
+        id: "customer-unsuspend".to_string(),
+        name: "Unsuspend Me".to_string(),
+        plan: None,
+        allowed_prefixes: None,
+        created_at: now,
+        suspended_at: Some(now - 120),
+    };
+    state
+        .db
+        .insert_customer(&customer)
+        .await
+        .expect("insert customer");
+
+    let payload = AdminUpdateCustomerRequest {
+        name: None,
+        plan: None,
+        suspended: Some(false),
+    };
+
+    let Json(response) = update_customer(
+        State(state),
+        admin_headers(),
+        Path(customer.id.clone()),
+        Json(payload),
+    )
+    .await
+    .expect("update customer");
+
+    assert!(response.suspended_at.is_none());
+}
+
+#[tokio::test]
 async fn create_release_is_idempotent() {
     let state = setup_state().await;
     let mut headers = admin_headers();
