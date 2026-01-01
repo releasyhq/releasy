@@ -18,6 +18,19 @@
       ]
     }
   },
+  "defaultGroups": [
+    "/release_publisher"
+  ],
+  "groups": [
+    {
+      "name": "release_publisher",
+      "clientRoles": {
+        "{{ keycloak_portal_client_id }}": [
+          "release_publisher"
+        ]
+      }
+    }
+  ],
   "clients": [
     {
       "clientId": "{{ keycloak_portal_client_id }}",
