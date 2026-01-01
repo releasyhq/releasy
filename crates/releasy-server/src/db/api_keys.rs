@@ -160,5 +160,6 @@ where
         scopes: row.try_get("scopes")?,
         expires_at: row.try_get("expires_at")?,
         revoked_at: row.try_get("revoked_at")?,
+        customer_suspended_at: row.try_get("suspended_at")?,
     })
 }

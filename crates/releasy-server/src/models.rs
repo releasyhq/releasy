@@ -35,6 +35,7 @@ pub struct ApiKeyAuthRecord {
     pub scopes: String,
     pub expires_at: Option<i64>,
     pub revoked_at: Option<i64>,
+    pub customer_suspended_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

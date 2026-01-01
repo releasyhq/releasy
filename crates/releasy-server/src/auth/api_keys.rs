@@ -277,6 +277,7 @@ fn api_key_from_headers(headers: &HeaderMap) -> Option<String> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApiKeyInvalidReason {
+    Suspended,
     Revoked,
     Expired,
 }
@@ -284,6 +285,7 @@ enum ApiKeyInvalidReason {
 impl ApiKeyInvalidReason {
     fn as_str(self) -> &'static str {
         match self {
+            ApiKeyInvalidReason::Suspended => "suspended",
             ApiKeyInvalidReason::Revoked => "revoked",
             ApiKeyInvalidReason::Expired => "expired",
         }
@@ -291,6 +293,9 @@ impl ApiKeyInvalidReason {
 }
 
 fn validate_api_key(record: &ApiKeyAuthRecord, now: i64) -> Result<(), ApiKeyInvalidReason> {
+    if record.customer_suspended_at.is_some() {
+        return Err(ApiKeyInvalidReason::Suspended);
+    }
     if record.revoked_at.is_some() {
         return Err(ApiKeyInvalidReason::Revoked);
     }
@@ -414,10 +419,29 @@ mod tests {
             scopes: "[]".to_string(),
             expires_at: None,
             revoked_at: Some(1),
+            customer_suspended_at: None,
         };
         assert_eq!(
             validate_api_key(&record, 0),
             Err(ApiKeyInvalidReason::Revoked)
+        );
+    }
+
+    #[test]
+    fn validate_api_key_rejects_suspended_customer() {
+        let record = ApiKeyAuthRecord {
+            id: "key".to_string(),
+            customer_id: "customer".to_string(),
+            key_hash: "hash".to_string(),
+            key_type: "human".to_string(),
+            scopes: "[]".to_string(),
+            expires_at: None,
+            revoked_at: None,
+            customer_suspended_at: Some(123),
+        };
+        assert_eq!(
+            validate_api_key(&record, 0),
+            Err(ApiKeyInvalidReason::Suspended)
         );
     }
 
@@ -463,6 +487,50 @@ mod tests {
 
         let last_used_at = fetch_last_used_at(&db, &key_id).await;
         assert!(last_used_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn authenticate_api_key_rejects_suspended_customer() {
+        let settings = test_settings_with_admin_key();
+        let db = setup_db(&settings).await;
+
+        let customer = Customer {
+            id: "customer".to_string(),
+            name: "Customer".to_string(),
+            plan: None,
+            allowed_prefixes: None,
+            created_at: 1,
+            suspended_at: Some(50),
+        };
+        db.insert_customer(&customer).await.expect("customer");
+
+        let raw_key = "releasy_test_key";
+        let scopes = default_scopes();
+        let record = ApiKeyRecord {
+            id: "key".to_string(),
+            customer_id: customer.id.clone(),
+            key_hash: hash_api_key(raw_key, None).expect("hash"),
+            key_prefix: api_key_prefix(raw_key),
+            name: None,
+            key_type: DEFAULT_API_KEY_TYPE.to_string(),
+            scopes: scopes_to_json(&scopes).expect("scopes"),
+            expires_at: None,
+            created_at: 1,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        let key_id = record.id.clone();
+        db.insert_api_key(&record).await.expect("api key");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-releasy-api-key", raw_key.parse().unwrap());
+        let err = authenticate_api_key(&headers, &settings, &db)
+            .await
+            .expect_err("suspended");
+        assert_eq!(err.status(), StatusCode::UNAUTHORIZED);
+
+        let last_used_at = fetch_last_used_at(&db, &key_id).await;
+        assert!(last_used_at.is_none());
     }
 
     #[tokio::test]
