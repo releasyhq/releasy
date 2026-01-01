@@ -36,16 +36,29 @@
     enabled: true
     state: started
 
-- name: Ensure Keycloak directories
+- name: Ensure Keycloak data directory
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ keycloak_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0770"
+
+- name: Ensure Keycloak data tmp directory
+  ansible.builtin.file:
+    path: "{{ keycloak_data_dir }}/tmp"
+    state: directory
+    owner: root
+    group: root
+    mode: "0770"
+
+- name: Ensure Keycloak env directory
+  ansible.builtin.file:
+    path: "{{ keycloak_env_dir }}"
     state: directory
     owner: root
     group: root
     mode: "0755"
-  loop:
-    - "{{ keycloak_data_dir }}"
-    - "{{ keycloak_env_dir }}"
 
 - name: Ensure Keycloak import directory
   ansible.builtin.file:
@@ -53,7 +66,7 @@
     state: directory
     owner: root
     group: root
-    mode: "0755"
+    mode: "0770"
   when: keycloak_realm_import_enabled | default(false)
 
 - name: Assert realm import source exists
