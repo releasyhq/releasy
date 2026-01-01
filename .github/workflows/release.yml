@@ -384,6 +384,8 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           path: dist
+          pattern: releasy-server-*
+          merge-multiple: true
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
