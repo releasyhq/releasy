@@ -94,6 +94,7 @@ async fn authorize_operator_jwt(
 
     let mut validation = Validation::new(Algorithm::RS256);
     validation.leeway = settings.operator_jwt_leeway_seconds as u64;
+    validation.validate_aud = false;
     validation.validate_exp = true;
     validation.validate_nbf = true;
     let token_data = decode::<Value>(token, &key, &validation).map_err(|err| {
@@ -211,11 +212,89 @@ fn admin_role_from_roles(roles: &HashSet<String>) -> Option<AdminRole> {
 mod tests {
     use super::*;
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use jsonwebtoken::{EncodingKey, Header, encode};
     use reqwest::Client;
     use serde_json::json;
     use std::time::Duration;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
+
+    const TEST_RSA_PRIVATE_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCqVOwBALGDc3KE
+8Mpku2Als1HjuYI1ffCKMK9/HG+hNlK6ZwFVRrvBEC4g5hGXAw96GLUs4XdA/jvl
+jDdKwzbre4qpP9c/tfEgczU3hkDZMrc4+/nwpF9gveFGfDA5TCwVQpnlVrGo8Tq8
+HAsumGmw5UFzCfocNu4HTULU7vZ7YWC4nHMxLCmNtYBg6qf9BmnQ/q3t4jzuAWUP
+6jlDUsT91MqMbccUz/PSEIMvDIir3sxy9eFbz+xZr9R4Ca9Ulq+of0Q2BQK2Ula4
+OKn2b30vCDMSQvbLtv3YAYzZqIBxqWpDnuCN9O6R+KE0gp4PUXGP8YbjQkHGvwFR
+uncdbq1BAgMBAAECggEACrgP5wtAYI2YGBogHoE1LoIvpdVThqK/i66/KJBlTP+i
+aqUXTiLGp4JpaLwZwMdaRrx90E57Bv3IzqwJgbyxvNV4NyjzloiQXVKqt20NMS3y
+HlWrF7P8ZZXlcp5XmY972bWogih3wzI1GEfqgzrnsdBnk0H+OZ7SUWbRDR3hqIdw
+jZGgYlcjgUkiAUuOOGxZ744CkBc7Vgh/OzpCRtgNTy8bg2qJ9fPXx+ZZpSIqSYfn
+LbUxPgA7L5l8/pJ9GVdlOQ+c6gI4/V8j250RqQDTWu2UT3nApu+wpCA9ZJeD+PRO
+eMEzYHSsgpD3gSwnYgQNIAVmM6Bqg2HuertHSbFo8QKBgQDqdsf9XMHMcQ2Opn/v
+RZBssJzq/r7zyPJIL9elewXjKQ6j5AKptqAA5zPuSYdEUgdbbHRIaOVa/0FmPGjk
+lBVZ47fmtKV18DSITKrgX3ptzb6awcAzM1VWpYWEG2f/wl8QgBuxAJrRmdo5ooia
+eN9wcFJIKsOO2CZ6DnbL/zMJuQKBgQC5+iAw3rPV3Kq4LS8dtXxUMCrCKuEXMQSr
+FWSW6SGns6H/VXi7S3wctTE+sftNNw3RqhrPO/n/H1P/Zlmhp8kSFPxgTns38mGT
+GD4N/QkOVxCw+BnayGtc0MJ8DVpOGRcVdx9NzXAmm0K6TawUTjaXxHvFyZqba1Us
+ZRfQPSXjyQKBgBRbP73VodXYMu8hsZXamlF1fApDF90eozp1POnXJom0dNrx3vFR
+M88gQ7f6lk3uOUlMv0PSJ6eg5dK0h/7ghIILbVoQcRUuR8FVtrhIUd7asCPLkp5f
+ZJdjQ5ZWss7X110dYkoZ3Vc5XmMGo4mV2QBwIBS38cajKaQLQXEwtQOxAoGAcMTd
+XiS8ETLUBgfH6RDSCc6HLuOHR2O+u+ql6ugEM0c2NLhkE9XKtTGdYbHUetamN3sY
+9I4eofciHNy3/tDZmHBHNDKCfsMnLWVmw16qbhqXEWfvbX1XtJkVRNln57FJEQgB
+YFDw70f35zYP4OQoMFDA6Ia9i/5CUEAgd3GMlxkCgYBr0zLnOQkFGB2O9LM6eBke
+yG6u7b80qFFHCegQeyCEVujO8szLUeQcSheMo/ahKmCF9LHjBKHSOiGNTmKAq0yT
+Hc6FcrRDgRtuqaWNgZl+oCE546gfXg6afa+rVZVnUETF3viWZwwZjM7Lxqg23uul
+Xh3rZofMT0lg072po3rEPw==
+-----END PRIVATE KEY-----"#;
+
+    const TEST_RSA_MODULUS: &str = "qlTsAQCxg3NyhPDKZLtgJbNR47mCNX3wijCvfxxvoTZSumcBVUa7wRAuIOYRlwMPehi1LOF3QP475Yw3SsM263uKqT_XP7XxIHM1N4ZA2TK3OPv58KRfYL3hRnwwOUwsFUKZ5VaxqPE6vBwLLphpsOVBcwn6HDbuB01C1O72e2FguJxzMSwpjbWAYOqn_QZp0P6t7eI87gFlD-o5Q1LE_dTKjG3HFM_z0hCDLwyIq97McvXhW8_sWa_UeAmvVJavqH9ENgUCtlJWuDip9m99LwgzEkL2y7b92AGM2aiAcalqQ57gjfTukfihNIKeD1Fxj_GG40JBxr8BUbp3HW6tQQ";
+    const TEST_RSA_KID: &str = "test-kid";
+
+    async fn start_jwks_server() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let body = format!(
+            "{{\"keys\":[{{\"kty\":\"RSA\",\"kid\":\"{kid}\",\"use\":\"sig\",\"alg\":\"RS256\",\"n\":\"{modulus}\",\"e\":\"AQAB\"}}]}}",
+            kid = TEST_RSA_KID,
+            modulus = TEST_RSA_MODULUS
+        );
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await.expect("write");
+        });
+
+        (format!("http://{addr}/jwks"), server)
+    }
+
+    fn build_test_token(issuer: &str, audience: &str) -> String {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_secs();
+        let claims = json!({
+            "iss": issuer,
+            "aud": audience,
+            "exp": now + 3600,
+            "iat": now,
+            "roles": ["platform_admin"],
+        });
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(TEST_RSA_KID.to_string());
+
+        encode(
+            &header,
+            &claims,
+            &EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_KEY.as_bytes()).expect("key"),
+        )
+        .expect("token")
+    }
 
     fn test_settings() -> Settings {
         Settings {
@@ -323,6 +402,59 @@ mod tests {
             .await
             .expect("role");
         assert_eq!(role, AdminRole::PlatformAdmin);
+    }
+
+    #[tokio::test]
+    async fn admin_authorize_with_role_accepts_jwt_with_audience_when_unconfigured() {
+        let (jwks_url, server) = start_jwks_server().await;
+        let cache = JwksCache::new_for_tests(
+            jwks_url,
+            Duration::from_secs(30),
+            Client::builder()
+                .timeout(Duration::from_millis(200))
+                .build()
+                .expect("client"),
+        );
+
+        let mut settings = test_settings();
+        settings.operator_issuer = Some("https://auth.example.com/realms/releasy".to_string());
+
+        let token = build_test_token("https://auth.example.com/realms/releasy", "account");
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+
+        let role = admin_authorize_with_role(&headers, &settings, &Some(cache))
+            .await
+            .expect("role");
+        assert_eq!(role, AdminRole::PlatformAdmin);
+        server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn admin_authorize_with_role_rejects_jwt_with_audience_mismatch() {
+        let (jwks_url, server) = start_jwks_server().await;
+        let cache = JwksCache::new_for_tests(
+            jwks_url,
+            Duration::from_secs(30),
+            Client::builder()
+                .timeout(Duration::from_millis(200))
+                .build()
+                .expect("client"),
+        );
+
+        let mut settings = test_settings();
+        settings.operator_issuer = Some("https://auth.example.com/realms/releasy".to_string());
+        settings.operator_audience = Some("releasy-admin".to_string());
+
+        let token = build_test_token("https://auth.example.com/realms/releasy", "account");
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+
+        let err = admin_authorize_with_role(&headers, &settings, &Some(cache))
+            .await
+            .expect_err("role");
+        assert_eq!(err.status(), StatusCode::UNAUTHORIZED);
+        server.await.expect("server");
     }
 
     #[test]
