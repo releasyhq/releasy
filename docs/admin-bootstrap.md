@@ -71,6 +71,134 @@ Response body:
 }
 ```
 
+## List Customers
+
+`GET /v1/admin/customers`
+
+Requires: `platform_admin` or `platform_support` role
+
+Query parameters:
+
+| Parameter     | Type    | Required | Description                                 |
+|---------------|---------|----------|---------------------------------------------|
+| `customer_id` | string  | no       | Filter by exact customer ID                 |
+| `name`        | string  | no       | Filter by name (case-insensitive, contains) |
+| `plan`        | string  | no       | Filter by plan (case-insensitive, exact)    |
+| `limit`       | integer | no       | Page size (default 50, max 200)             |
+| `offset`      | integer | no       | Page offset (default 0)                     |
+
+Example:
+
+```bash
+curl -X GET "http://localhost:8080/v1/admin/customers?name=acme&limit=10" \
+  -H "x-releasy-admin-key: $RELEASY_ADMIN_API_KEY"
+```
+
+Response body:
+
+```json
+{
+  "customers": [
+    {
+      "id": "<uuid>",
+      "name": "Acme",
+      "plan": "core",
+      "created_at": 1735312000,
+      "suspended_at": null
+    }
+  ],
+  "limit": 10,
+  "offset": 0
+}
+```
+
+## Get a Customer
+
+`GET /v1/admin/customers/{customer_id}`
+
+Requires: `platform_admin` or `platform_support` role
+
+Path parameters:
+
+| Parameter     | Type   | Required | Description   |
+|---------------|--------|----------|---------------|
+| `customer_id` | string | yes      | Customer UUID |
+
+Example:
+
+```bash
+curl -X GET "http://localhost:8080/v1/admin/customers/<customer-id>" \
+  -H "x-releasy-admin-key: $RELEASY_ADMIN_API_KEY"
+```
+
+Response body:
+
+```json
+{
+  "id": "<uuid>",
+  "name": "Acme",
+  "plan": "core",
+  "created_at": 1735312000,
+  "suspended_at": null
+}
+```
+
+## Update a Customer
+
+`PATCH /v1/admin/customers/{customer_id}`
+
+Requires: `platform_admin` role
+
+Path parameters:
+
+| Parameter     | Type   | Required | Description   |
+|---------------|--------|----------|---------------|
+| `customer_id` | string | yes      | Customer UUID |
+
+Request body (at least one field required):
+
+| Field       | Type    | Required | Description                                    |
+|-------------|---------|----------|------------------------------------------------|
+| `name`      | string  | no       | New customer name (must not be empty)          |
+| `plan`      | string  | no       | New plan identifier (null to remove plan)      |
+| `suspended` | boolean | no       | Set to `true` to suspend, `false` to unsuspend |
+
+Example (suspend a customer):
+
+```bash
+curl -X PATCH "http://localhost:8080/v1/admin/customers/<customer-id>" \
+  -H "x-releasy-admin-key: $RELEASY_ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"suspended": true}'
+```
+
+Example (update name and plan):
+
+```bash
+curl -X PATCH "http://localhost:8080/v1/admin/customers/<customer-id>" \
+  -H "x-releasy-admin-key: $RELEASY_ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"name": "Acme Corp", "plan": "enterprise"}'
+```
+
+Response body:
+
+```json
+{
+  "id": "<uuid>",
+  "name": "Acme Corp",
+  "plan": "enterprise",
+  "created_at": 1735312000,
+  "suspended_at": 1735398400
+}
+```
+
+Notes:
+
+- When `suspended` is set to `true`, the `suspended_at` timestamp is recorded.
+- When `suspended` is set to `false`, the `suspended_at` field is cleared.
+- Suspended customers cannot authenticate with their API keys.
+
 ## Create a Customer API Key
 
 `POST /v1/admin/keys`
@@ -98,6 +226,7 @@ Available scopes:
 - `downloads:token` - Generate download tokens
 - `keys:read` - Introspect API keys
 - `keys:write` - Manage API keys
+- `audit:read` - Read audit events
 
 Example:
 
