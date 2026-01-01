@@ -44,6 +44,7 @@ Releasy currently emits a single event family for API key authentication.
     - `ok`
     - `missing_header`
     - `not_found`
+    - `suspended`
     - `revoked`
     - `expired`
     - `invalid_scopes`
@@ -63,6 +64,8 @@ Example payload:
 Notes:
 
 - `customer_id` is populated when the key is resolved; otherwise it is `NULL`.
+- `suspended` indicates the owning customer is suspended; monitor for repeated
+  occurrences to catch blocked users still trying to call the API.
 - Events are best-effort. If system time is unavailable, the event is skipped
   and a warning is logged.
 - Payloads must not include secrets. Use IDs and short reason codes only.
