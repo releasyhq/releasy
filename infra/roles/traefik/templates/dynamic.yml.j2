@@ -31,7 +31,7 @@ http:
       entryPoints:
         - websecure
       middlewares:
-        - rate-limit
+        - keycloak-rate-limit
       tls:
         certResolver: letsencrypt
       service: keycloak
@@ -77,3 +77,7 @@ http:
       rateLimit:
         average: {{ traefik_rate_limit_average }}
         burst: {{ traefik_rate_limit_burst }}
+    keycloak-rate-limit:
+      rateLimit:
+        average: {{ keycloak_rate_limit_average }}
+        burst: {{ keycloak_rate_limit_burst }}
