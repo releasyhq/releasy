@@ -25,6 +25,7 @@ keycloak_realm_import_source: "template"
 keycloak_realm_import_src: ""
 keycloak_realm_import_dest: "realm.json"
 keycloak_start_args: []
+keycloak_docker_dns: []
 keycloak_realm_name: "releasy"
 keycloak_portal_client_id: "releasy-portal"
 keycloak_portal_client_secret: ""
