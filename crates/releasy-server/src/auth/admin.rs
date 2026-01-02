@@ -22,7 +22,7 @@ pub fn admin_authorize(headers: &HeaderMap, settings: &Settings) -> Result<(), A
             "admin api key not configured",
         )
     })?;
-    let candidate = admin_key_from_headers(headers).ok_or_else(ApiError::unauthorized)?;
+    let candidate = admin_key_from_headers(headers, expected).ok_or_else(ApiError::unauthorized)?;
     if candidate == expected.as_str() {
         Ok(())
     } else {
@@ -35,7 +35,9 @@ pub async fn admin_authorize_with_role(
     settings: &Settings,
     jwks_cache: &Option<JwksCache>,
 ) -> Result<AdminRole, ApiError> {
-    if admin_key_from_headers(headers).is_some() {
+    if let Some(expected) = settings.admin_api_key.as_deref()
+        && admin_key_from_headers(headers, expected).is_some()
+    {
         admin_authorize(headers, settings)?;
         info!("admin authorization via admin key");
         return Ok(AdminRole::PlatformAdmin);
@@ -125,9 +127,9 @@ async fn authorize_operator_jwt(
     Ok(role)
 }
 
-fn admin_key_from_headers(headers: &HeaderMap) -> Option<String> {
+fn admin_key_from_headers(headers: &HeaderMap, expected: &str) -> Option<String> {
     if let Some(bearer) = bearer_token(headers)
-        && !looks_like_jwt(&bearer)
+        && (bearer == expected || !looks_like_jwt(&bearer))
     {
         return Some(bearer);
     }
@@ -403,6 +405,34 @@ Xh3rZofMT0lg072po3rEPw==
             .await
             .expect("role");
         assert_eq!(role, AdminRole::PlatformAdmin);
+    }
+
+    #[tokio::test]
+    async fn admin_authorize_with_role_accepts_jwt_like_admin_key() {
+        let mut settings = test_settings();
+        settings.admin_api_key = Some("a.b.c".to_string());
+
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer a.b.c".parse().unwrap());
+
+        let role = admin_authorize_with_role(&headers, &settings, &None)
+            .await
+            .expect("role");
+        assert_eq!(role, AdminRole::PlatformAdmin);
+    }
+
+    #[tokio::test]
+    async fn admin_authorize_with_role_rejects_wrong_jwt_like_admin_key() {
+        let mut settings = test_settings();
+        settings.admin_api_key = Some("expected.token.value".to_string());
+
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer other.token.value".parse().unwrap());
+
+        let err = admin_authorize_with_role(&headers, &settings, &None)
+            .await
+            .expect_err("role");
+        assert_eq!(err.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
