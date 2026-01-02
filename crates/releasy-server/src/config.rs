@@ -7,6 +7,7 @@ pub struct Settings {
     pub database_url: String,
     pub database_max_connections: u32,
     pub download_token_ttl_seconds: u32,
+    pub public_base_url: String,
     pub admin_api_key: Option<String>,
     pub api_key_pepper: Option<String>,
     pub operator_jwks_url: Option<String>,
@@ -45,6 +46,7 @@ impl Settings {
             .map(|value| parse_u32("RELEASY_DOWNLOAD_TOKEN_TTL_SECONDS", &value))
             .transpose()?
             .unwrap_or(600);
+        let public_base_url = parse_public_base_url(optional_env("RELEASY_PUBLIC_BASE_URL"))?;
         let admin_api_key = optional_env("RELEASY_ADMIN_API_KEY");
         let api_key_pepper = optional_env("RELEASY_API_KEY_PEPPER");
         let operator_jwks_url = optional_env("RELEASY_OPERATOR_JWKS_URL");
@@ -108,6 +110,7 @@ impl Settings {
             database_url,
             database_max_connections,
             download_token_ttl_seconds,
+            public_base_url,
             admin_api_key,
             api_key_pepper,
             operator_jwks_url,
@@ -144,4 +147,20 @@ fn parse_bool(key: &str, value: &str) -> Result<bool, String> {
         "false" | "0" | "no" => Ok(false),
         _ => Err(format!("{key} must be a boolean")),
     }
+}
+
+fn parse_public_base_url(value: Option<String>) -> Result<String, String> {
+    let value = value.unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
+    let url =
+        reqwest::Url::parse(&value).map_err(|_| "RELEASY_PUBLIC_BASE_URL must be a valid URL")?;
+
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => return Err("RELEASY_PUBLIC_BASE_URL must use http or https".to_string()),
+    }
+
+    url.host_str()
+        .ok_or("RELEASY_PUBLIC_BASE_URL must include a host")?;
+
+    Ok(value.trim_end_matches('/').to_string())
 }

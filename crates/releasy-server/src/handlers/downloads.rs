@@ -145,7 +145,7 @@ pub async fn create_download_token(
                     ApiError::internal("failed to create download token")
                 })?;
 
-            let download_url = build_download_url(&headers, &token)?;
+            let download_url = build_download_url(&state.settings, &token)?;
 
             Ok(DownloadTokenResponse {
                 download_url,

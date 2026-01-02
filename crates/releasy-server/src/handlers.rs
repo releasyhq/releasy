@@ -40,7 +40,7 @@ pub(crate) use releases::{
 };
 
 use axum::extract::Json;
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode};
 use hex::encode as hex_encode;
 use s3::Bucket;
 use s3::Region;
@@ -56,7 +56,7 @@ use tracing::error;
 
 use crate::app::AppState;
 use crate::auth::{AdminRole, admin_authorize_with_role, require_admin, require_release_publisher};
-use crate::config::ArtifactSettings;
+use crate::config::{ArtifactSettings, Settings};
 use crate::errors::ApiError;
 use crate::models::{ALLOWED_SCOPES, DEFAULT_API_KEY_TYPE, EntitlementRecord, ReleaseRecord};
 use crate::release::{ReleaseAction, ReleaseStatus, ReleaseTransitionError, apply_release_action};
@@ -67,7 +67,7 @@ use tokio::sync::Barrier;
 
 #[cfg(test)]
 static RELEASE_UPDATE_BARRIER: Mutex<Option<Arc<Barrier>>> = Mutex::new(None);
-fn artifact_settings(settings: &crate::config::Settings) -> Result<&ArtifactSettings, ApiError> {
+fn artifact_settings(settings: &Settings) -> Result<&ArtifactSettings, ApiError> {
     settings.artifact_settings.as_ref().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -516,20 +516,12 @@ fn resolve_requested_ttl(requested: Option<u32>, max: u32, field: &str) -> Resul
     Ok(ttl)
 }
 
-fn build_download_url(headers: &HeaderMap, token: &str) -> Result<String, ApiError> {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::bad_request("missing Host header"))?;
-    let proto = headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("https");
-    Ok(format!("{proto}://{host}/v1/downloads/{token}"))
+fn build_download_url(settings: &Settings, token: &str) -> Result<String, ApiError> {
+    let base = settings.public_base_url.trim_end_matches('/');
+    if base.is_empty() {
+        return Err(ApiError::internal("public base url missing"));
+    }
+    Ok(format!("{base}/v1/downloads/{token}"))
 }
 
 fn is_product_entitled(entitlements: &[EntitlementRecord], product: &str, now: i64) -> bool {

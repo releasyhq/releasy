@@ -12,6 +12,7 @@ pub(crate) fn base_test_settings() -> Settings {
         database_url: "sqlite::memory:".to_string(),
         database_max_connections: 1,
         download_token_ttl_seconds: 600,
+        public_base_url: "http://127.0.0.1:8080".to_string(),
         admin_api_key: None,
         api_key_pepper: None,
         operator_jwks_url: None,

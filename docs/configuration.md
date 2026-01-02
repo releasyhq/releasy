@@ -95,9 +95,15 @@ export RELEASY_OPERATOR_RESOURCE="releasy"
 
 ## Downloads
 
-| Variable                             | Required | Default | Description                                    |
-|--------------------------------------|----------|---------|------------------------------------------------|
-| `RELEASY_DOWNLOAD_TOKEN_TTL_SECONDS` | no       | `600`   | Maximum lifetime for download tokens (seconds) |
+| Variable                             | Required | Default                 | Description                                                  |
+|--------------------------------------|----------|-------------------------|--------------------------------------------------------------|
+| `RELEASY_DOWNLOAD_TOKEN_TTL_SECONDS` | no       | `600`                   | Maximum lifetime for download tokens (seconds)               |
+| `RELEASY_PUBLIC_BASE_URL`            | no       | `http://127.0.0.1:8080` | Public base URL used to build download links (http/https)    |
+
+`RELEASY_PUBLIC_BASE_URL` should be set to the externally reachable hostname
+and scheme (typically `https://downloads.example.com`). Download URLs are built
+from this value instead of trusting client-supplied headers to avoid open
+redirects or phishing links.
 
 ## Artifact Storage (S3)
 
