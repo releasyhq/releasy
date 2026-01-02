@@ -1367,6 +1367,44 @@ async fn list_releases_returns_empty_without_entitlement() {
 }
 
 #[tokio::test]
+async fn list_releases_ignores_empty_api_key_header_for_admin_path() {
+    let state = setup_state().await;
+    let now = now_ts_or_internal().expect("now");
+
+    let release = ReleaseRecord {
+        id: "release-admin-path".to_string(),
+        product: "releasy".to_string(),
+        version: "9.9.9".to_string(),
+        status: ReleaseStatus::Published.as_str().to_string(),
+        created_at: now,
+        published_at: Some(now),
+    };
+    state
+        .db
+        .insert_release(&release)
+        .await
+        .expect("insert release");
+
+    let mut headers = admin_headers();
+    headers.insert("x-releasy-api-key", "".parse().unwrap());
+
+    let query = ReleaseListQuery {
+        product: None,
+        status: None,
+        version: None,
+        include_artifacts: None,
+        limit: None,
+        offset: None,
+    };
+    let Json(response) = list_releases(State(state), headers, Query(query))
+        .await
+        .expect("list releases");
+
+    assert_eq!(response.releases.len(), 1);
+    assert_eq!(response.releases[0].id, release.id);
+}
+
+#[tokio::test]
 async fn list_releases_for_admin_groups_artifacts_once() {
     let state = setup_state().await;
     let now = now_ts_or_internal().expect("now");

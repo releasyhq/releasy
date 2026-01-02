@@ -193,7 +193,7 @@ pub async fn list_releases(
     headers: HeaderMap,
     Query(query): Query<ReleaseListQuery>,
 ) -> Result<Json<ReleaseListResponse>, ApiError> {
-    if headers.contains_key("x-releasy-api-key") {
+    if api_key_header(&headers).is_some() {
         return list_releases_for_customer(&state, &headers, query).await;
     }
     list_releases_for_admin(&state, &headers, query).await
@@ -352,6 +352,14 @@ async fn list_releases_for_customer(
         limit,
         offset,
     }))
+}
+
+fn api_key_header(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-releasy-api-key")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 async fn load_artifacts_for_releases(
