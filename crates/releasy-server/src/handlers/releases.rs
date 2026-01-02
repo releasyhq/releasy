@@ -1,7 +1,7 @@
 use axum::extract::{Json, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tracing::error;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -64,7 +64,7 @@ impl ReleaseResponse {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]
 pub(crate) struct ArtifactSummary {
     pub(crate) id: String,
     pub(crate) object_key: String,
@@ -235,26 +235,17 @@ async fn list_releases_for_admin(
             ApiError::internal("failed to list releases")
         })?;
 
+    let artifacts_by_release = if include_artifacts {
+        Some(load_artifacts_for_releases(state, &releases).await?)
+    } else {
+        None
+    };
+
     let mut responses = Vec::with_capacity(releases.len());
     for record in releases {
-        let artifacts = if include_artifacts {
-            let items = state
-                .db
-                .list_artifacts_by_release(&record.id)
-                .await
-                .map_err(|err| {
-                    error!("failed to list artifacts: {err}");
-                    ApiError::internal("failed to list artifacts")
-                })?;
-            Some(
-                items
-                    .into_iter()
-                    .map(ArtifactSummary::from_record)
-                    .collect(),
-            )
-        } else {
-            None
-        };
+        let artifacts = artifacts_by_release
+            .as_ref()
+            .map(|map| map.get(&record.id).cloned().unwrap_or_default());
         responses.push(ReleaseResponse::from_record(record, artifacts));
     }
 
@@ -342,26 +333,17 @@ async fn list_releases_for_customer(
             ApiError::internal("failed to list releases")
         })?;
 
+    let artifacts_by_release = if include_artifacts {
+        Some(load_artifacts_for_releases(state, &releases).await?)
+    } else {
+        None
+    };
+
     let mut responses = Vec::with_capacity(releases.len());
     for record in releases {
-        let artifacts = if include_artifacts {
-            let items = state
-                .db
-                .list_artifacts_by_release(&record.id)
-                .await
-                .map_err(|err| {
-                    error!("failed to list artifacts: {err}");
-                    ApiError::internal("failed to list artifacts")
-                })?;
-            Some(
-                items
-                    .into_iter()
-                    .map(ArtifactSummary::from_record)
-                    .collect(),
-            )
-        } else {
-            None
-        };
+        let artifacts = artifacts_by_release
+            .as_ref()
+            .map(|map| map.get(&record.id).cloned().unwrap_or_default());
         responses.push(ReleaseResponse::from_record(record, artifacts));
     }
 
@@ -370,6 +352,39 @@ async fn list_releases_for_customer(
         limit,
         offset,
     }))
+}
+
+async fn load_artifacts_for_releases(
+    state: &AppState,
+    releases: &[ReleaseRecord],
+) -> Result<HashMap<String, Vec<ArtifactSummary>>, ApiError> {
+    let release_ids: Vec<String> = releases.iter().map(|release| release.id.clone()).collect();
+    if release_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let artifacts = state
+        .db
+        .list_artifacts_by_releases(&release_ids)
+        .await
+        .map_err(|err| {
+            error!("failed to list artifacts: {err}");
+            ApiError::internal("failed to list artifacts")
+        })?;
+
+    let mut grouped: HashMap<String, Vec<ArtifactSummary>> = HashMap::new();
+    for artifact in artifacts {
+        grouped
+            .entry(artifact.release_id.clone())
+            .or_default()
+            .push(ArtifactSummary::from_record(artifact));
+    }
+
+    for release_id in release_ids {
+        grouped.entry(release_id).or_default();
+    }
+
+    Ok(grouped)
 }
 
 #[utoipa::path(

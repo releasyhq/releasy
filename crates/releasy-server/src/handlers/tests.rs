@@ -1365,3 +1365,266 @@ async fn list_releases_returns_empty_without_entitlement() {
         .expect("list releases");
     assert!(response.releases.is_empty());
 }
+
+#[tokio::test]
+async fn list_releases_for_admin_groups_artifacts_once() {
+    let state = setup_state().await;
+    let now = now_ts_or_internal().expect("now");
+
+    let releases = [
+        ReleaseRecord {
+            id: "release-with-two".to_string(),
+            product: "releasy".to_string(),
+            version: "1.0.0".to_string(),
+            status: ReleaseStatus::Published.as_str().to_string(),
+            created_at: now,
+            published_at: Some(now),
+        },
+        ReleaseRecord {
+            id: "release-with-one".to_string(),
+            product: "releasy".to_string(),
+            version: "1.1.0".to_string(),
+            status: ReleaseStatus::Published.as_str().to_string(),
+            created_at: now + 1,
+            published_at: Some(now + 1),
+        },
+        ReleaseRecord {
+            id: "release-with-none".to_string(),
+            product: "releasy".to_string(),
+            version: "1.2.0".to_string(),
+            status: ReleaseStatus::Published.as_str().to_string(),
+            created_at: now + 2,
+            published_at: Some(now + 2),
+        },
+    ];
+
+    for release in &releases {
+        state
+            .db
+            .insert_release(release)
+            .await
+            .expect("insert release");
+    }
+
+    let artifacts = [
+        ArtifactRecord {
+            id: "artifact-a".to_string(),
+            release_id: releases[0].id.clone(),
+            object_key: "releases/releasy/1.0.0/linux/a.tar.gz".to_string(),
+            checksum: "a".repeat(64),
+            size: 1,
+            platform: "linux".to_string(),
+            created_at: now,
+        },
+        ArtifactRecord {
+            id: "artifact-b".to_string(),
+            release_id: releases[0].id.clone(),
+            object_key: "releases/releasy/1.0.0/linux/b.tar.gz".to_string(),
+            checksum: "b".repeat(64),
+            size: 2,
+            platform: "linux".to_string(),
+            created_at: now + 1,
+        },
+        ArtifactRecord {
+            id: "artifact-c".to_string(),
+            release_id: releases[1].id.clone(),
+            object_key: "releases/releasy/1.1.0/linux/c.tar.gz".to_string(),
+            checksum: "c".repeat(64),
+            size: 3,
+            platform: "linux".to_string(),
+            created_at: now + 2,
+        },
+    ];
+
+    for artifact in &artifacts {
+        state
+            .db
+            .insert_artifact(artifact)
+            .await
+            .expect("insert artifact");
+    }
+
+    let query = ReleaseListQuery {
+        product: None,
+        status: None,
+        version: None,
+        include_artifacts: Some(true),
+        limit: None,
+        offset: None,
+    };
+    let Json(response) = list_releases(State(state), admin_headers(), Query(query))
+        .await
+        .expect("list releases");
+
+    assert_eq!(response.releases.len(), releases.len());
+
+    let mut by_id = std::collections::HashMap::new();
+    for release in response.releases {
+        by_id.insert(release.id.clone(), release);
+    }
+
+    let with_two = by_id
+        .get("release-with-two")
+        .and_then(|release| release.artifacts.as_ref())
+        .expect("artifacts");
+    assert_eq!(with_two.len(), 2);
+    assert!(with_two.iter().any(|artifact| artifact.id == "artifact-a"));
+    assert!(with_two.iter().any(|artifact| artifact.id == "artifact-b"));
+
+    let with_one = by_id
+        .get("release-with-one")
+        .and_then(|release| release.artifacts.as_ref())
+        .expect("artifacts");
+    assert_eq!(with_one.len(), 1);
+    assert_eq!(with_one[0].id, "artifact-c");
+
+    let with_none = by_id
+        .get("release-with-none")
+        .and_then(|release| release.artifacts.as_ref())
+        .expect("artifacts");
+    assert!(with_none.is_empty());
+}
+
+#[tokio::test]
+async fn list_releases_for_customer_groups_artifacts_once() {
+    let state = setup_state().await;
+    let now = now_ts_or_internal().expect("now");
+
+    let customer = Customer {
+        id: "customer-artifacts".to_string(),
+        name: "Artifacts Customer".to_string(),
+        plan: None,
+        allowed_prefixes: None,
+        created_at: now,
+        suspended_at: None,
+    };
+    state
+        .db
+        .insert_customer(&customer)
+        .await
+        .expect("insert customer");
+
+    let raw_key = "releasy_artifacts_key";
+    let scopes = vec!["releases:read".to_string()];
+    let api_key = ApiKeyRecord {
+        id: "api-key-artifacts".to_string(),
+        customer_id: customer.id.clone(),
+        key_hash: hash_api_key(raw_key, None).expect("hash api key"),
+        key_prefix: api_key_prefix(raw_key),
+        name: None,
+        key_type: DEFAULT_API_KEY_TYPE.to_string(),
+        scopes: scopes_to_json(&scopes).expect("scopes json"),
+        expires_at: None,
+        created_at: now,
+        revoked_at: None,
+        last_used_at: None,
+    };
+    state
+        .db
+        .insert_api_key(&api_key)
+        .await
+        .expect("insert api key");
+
+    let entitlement = EntitlementRecord {
+        id: "entitlement-artifacts".to_string(),
+        customer_id: customer.id.clone(),
+        product: "releasy-pro".to_string(),
+        starts_at: now - 10,
+        ends_at: None,
+        metadata: None,
+    };
+    state
+        .db
+        .insert_entitlement(&entitlement)
+        .await
+        .expect("insert entitlement");
+
+    let releases = [
+        ReleaseRecord {
+            id: "release-pro-1".to_string(),
+            product: entitlement.product.clone(),
+            version: "1.0.0".to_string(),
+            status: ReleaseStatus::Published.as_str().to_string(),
+            created_at: now,
+            published_at: Some(now),
+        },
+        ReleaseRecord {
+            id: "release-pro-2".to_string(),
+            product: entitlement.product.clone(),
+            version: "1.1.0".to_string(),
+            status: ReleaseStatus::Published.as_str().to_string(),
+            created_at: now + 1,
+            published_at: Some(now + 1),
+        },
+    ];
+
+    for release in &releases {
+        state
+            .db
+            .insert_release(release)
+            .await
+            .expect("insert release");
+    }
+
+    let artifacts = [
+        ArtifactRecord {
+            id: "artifact-pro-a".to_string(),
+            release_id: releases[0].id.clone(),
+            object_key: "releases/releasy-pro/1.0.0/linux/a.tar.gz".to_string(),
+            checksum: "d".repeat(64),
+            size: 10,
+            platform: "linux".to_string(),
+            created_at: now,
+        },
+        ArtifactRecord {
+            id: "artifact-pro-b".to_string(),
+            release_id: releases[1].id.clone(),
+            object_key: "releases/releasy-pro/1.1.0/linux/b.tar.gz".to_string(),
+            checksum: "e".repeat(64),
+            size: 11,
+            platform: "linux".to_string(),
+            created_at: now + 1,
+        },
+    ];
+
+    for artifact in &artifacts {
+        state
+            .db
+            .insert_artifact(artifact)
+            .await
+            .expect("insert artifact");
+    }
+
+    let query = ReleaseListQuery {
+        product: None,
+        status: None,
+        version: None,
+        include_artifacts: Some(true),
+        limit: None,
+        offset: None,
+    };
+    let Json(response) = list_releases(State(state), api_headers(raw_key), Query(query))
+        .await
+        .expect("list releases");
+
+    assert_eq!(response.releases.len(), releases.len());
+
+    let mut by_id = std::collections::HashMap::new();
+    for release in response.releases {
+        by_id.insert(release.id.clone(), release);
+    }
+
+    let artifacts_first = by_id
+        .get("release-pro-1")
+        .and_then(|release| release.artifacts.as_ref())
+        .expect("artifacts");
+    assert_eq!(artifacts_first.len(), 1);
+    assert_eq!(artifacts_first[0].id, "artifact-pro-a");
+
+    let artifacts_second = by_id
+        .get("release-pro-2")
+        .and_then(|release| release.artifacts.as_ref())
+        .expect("artifacts");
+    assert_eq!(artifacts_second.len(), 1);
+    assert_eq!(artifacts_second[0].id, "artifact-pro-b");
+}

@@ -24,6 +24,21 @@ impl Database {
         })
     }
 
+    pub async fn list_artifacts_by_releases(
+        &self,
+        release_ids: &[String],
+    ) -> Result<Vec<ArtifactRecord>, sqlx::Error> {
+        if release_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        with_db!(self, |pool, Db| {
+            let mut builder = build_list_artifacts_by_releases_query::<Db>(release_ids);
+            let rows = builder.build().fetch_all(pool).await?;
+            rows.into_iter().map(map_artifact).collect()
+        })
+    }
+
     pub async fn get_artifact(
         &self,
         artifact_id: &str,
@@ -67,6 +82,23 @@ where
     let mut builder = QueryBuilder::<DB>::new(sql::artifacts::LIST_BY_RELEASE);
     builder.push(" ").push_bind(release_id);
     builder.push(" ORDER BY created_at ASC");
+    builder
+}
+
+fn build_list_artifacts_by_releases_query<'args, DB>(
+    release_ids: &'args [String],
+) -> QueryBuilder<'args, DB>
+where
+    DB: sqlx::Database,
+    &'args str: sqlx::Encode<'args, DB> + sqlx::Type<DB>,
+{
+    let mut builder = QueryBuilder::<DB>::new(sql::artifacts::LIST_BY_RELEASES);
+    builder.push(" (");
+    let mut separated = builder.separated(", ");
+    for release_id in release_ids {
+        separated.push_bind(release_id.as_str());
+    }
+    builder.push(") ORDER BY release_id ASC, created_at ASC");
     builder
 }
 

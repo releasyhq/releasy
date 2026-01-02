@@ -30,6 +30,10 @@ pub(in crate::db) mod artifacts {
         env!("CARGO_MANIFEST_DIR"),
         "/sql/artifacts/list_by_release.sql"
     ));
+    pub(in crate::db) const LIST_BY_RELEASES: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/sql/artifacts/list_by_releases.sql"
+    ));
     pub(in crate::db) const GET: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/sql/artifacts/get.sql"
