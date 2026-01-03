@@ -363,7 +363,7 @@ jobs:
                 *) section="Other" ;;
               esac
               add_item "$section" "- ${title} (${hash})"
-            done < <(git log --no-merges --pretty=format:'%s|%h' "$range")
+            done < <(git log --no-merges --pretty=format:'%s|%h%n' "$range")
 
             for section in "Features" "Fixes" "Performance" "Refactoring" \
               "Documentation" "Tests" "Chores" "Style" "Reverts" "Other"; do
