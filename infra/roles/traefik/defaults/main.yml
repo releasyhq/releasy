@@ -1,7 +1,0 @@
----
-traefik_releasy_enabled: true
-traefik_releasy_server_healthcheck_enabled: true
-traefik_releasy_server_healthcheck_path: >-
-  {{ releasy_server_healthcheck_path | default('/ready') }}
-traefik_releasy_server_healthcheck_interval: "10s"
-traefik_releasy_server_healthcheck_timeout: "2s"

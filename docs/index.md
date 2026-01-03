@@ -115,7 +115,7 @@ customer and artifact, with configurable expiration.
 - [Configuration](configuration.md) – Environment variables reference
 - [Deployment](deployment.md) – Self-hosted topologies and rollout strategies
 - [Database](database.md) – PostgreSQL and SQLite support
-- [Infrastructure](infra.md) – Ansible deployment layout and runbook
+- [Infrastructure](infra.md) – Ansible deployment (moved to releasy-infra)
 - [Operator Authentication](operator-auth.md) – JWT/JWKS configuration and RBAC
 
 ## API Reference

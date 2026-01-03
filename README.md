@@ -22,7 +22,7 @@ Releasy is an API-first platform to manage:
 - [Configuration](docs/configuration.md) – Environment variables reference
 - [Deployment](docs/deployment.md) – Self-hosted topologies and rollouts
 - [Database](docs/database.md) – Postgres/SQLite support and migrations
-- [Ansible Deployment](infra/README.md) – Playbook layout and runbook
+- [Ansible Deployment](docs/infra.md) – Playbook layout and runbook (releasy-infra)
 
 **API Reference:**
 
