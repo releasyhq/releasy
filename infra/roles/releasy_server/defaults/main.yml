@@ -5,6 +5,9 @@ releasy_database_url: >-
      (releasy_server_postgres_host | default(postgres_host, true)) ~ ":" ~
      postgres_port ~ "/" ~ postgres_app_db }}
 
+# When true, always pull the server image and trigger a rolling restart.
+releasy_server_pull_always: false
+
 # Optional firewall defaults (app host). Keep disabled by default.
 releasy_firewall_enabled: false
 releasy_firewall_enable_ufw: false

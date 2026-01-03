@@ -268,7 +268,9 @@
 - name: Pull server image
   ansible.builtin.command: "docker pull {{ releasy_server_image }}"
   register: releasy_server_pull
-  changed_when: "'Downloaded newer image' in (releasy_server_pull.stdout | default(''))"
+  changed_when: >-
+    (releasy_server_pull_always | default(false))
+    or ('Downloaded newer image' in (releasy_server_pull.stdout | default('')))
 
 - name: Render server environment file
   ansible.builtin.template:
@@ -304,6 +306,11 @@
     mode: "0644"
   register: releasy_server_unit
   notify: Reload systemd
+
+- name: Reload systemd when server unit changes
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: releasy_server_unit.changed
 
 - name: Stop legacy releasy-server service if present
   ansible.builtin.systemd:
