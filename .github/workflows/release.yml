@@ -332,38 +332,40 @@ jobs:
                 sections["$key"]="$line"
               fi
             }
-            while IFS='|' read -r subject hash; do
-              type="other"
+            while IFS='|' read -r subject hash || [ -n "$subject" ]; do
               title="$subject"
+              section="Other"
               if [[ "$subject" =~ $subject_regex ]]; then
                 type="${BASH_REMATCH[1]}"
                 scope="${BASH_REMATCH[2]}"
                 breaking="${BASH_REMATCH[3]}"
                 message="${BASH_REMATCH[4]}"
-                if [ -n "$scope" ]; then
-                  scope="${scope:1:${#scope}-2}"
-                  title="${scope}: ${message}"
-                else
-                  title="${message}"
-                fi
-                if [ -n "$breaking" ]; then
-                  title="BREAKING: ${title}"
+                case "$type" in
+                  feat) section="Features" ;;
+                  fix) section="Fixes" ;;
+                  perf) section="Performance" ;;
+                  refactor) section="Refactoring" ;;
+                  docs) section="Documentation" ;;
+                  test) section="Tests" ;;
+                  chore|build|ci) section="Chores" ;;
+                  style) section="Style" ;;
+                  revert) section="Reverts" ;;
+                  *) section="Other" ;;
+                esac
+                if [ "$section" != "Other" ]; then
+                  if [ -n "$scope" ]; then
+                    scope="${scope:1:${#scope}-2}"
+                    title="${scope}: ${message}"
+                  else
+                    title="${message}"
+                  fi
+                  if [ -n "$breaking" ]; then
+                    title="BREAKING: ${title}"
+                  fi
                 fi
               fi
-              case "$type" in
-                feat) section="Features" ;;
-                fix) section="Fixes" ;;
-                perf) section="Performance" ;;
-                refactor) section="Refactoring" ;;
-                docs) section="Documentation" ;;
-                test) section="Tests" ;;
-                chore|build|ci) section="Chores" ;;
-                style) section="Style" ;;
-                revert) section="Reverts" ;;
-                *) section="Other" ;;
-              esac
               add_item "$section" "- ${title} (${hash})"
-            done < <(git log --no-merges --pretty=format:'%s|%h%n' "$range")
+            done < <(git log --no-merges --pretty=format:'%s|%h' "$range")
 
             for section in "Features" "Fixes" "Performance" "Refactoring" \
               "Documentation" "Tests" "Chores" "Style" "Reverts" "Other"; do
